@@ -97,17 +97,6 @@ n_iter = st.sidebar.slider("n_iter de RandomizedSearch", 5, 50, 10, 5)
 cv_folds = st.sidebar.slider("Pliegues de CV", 3, 10, 3, 1)
 test_size = st.sidebar.slider("Tamaño de prueba", 0.1, 0.4, 0.25, 0.05)
 
-# ---- Comparación de modelos (sidebar) ----
-st.sidebar.divider()
-st.sidebar.subheader("📊 Comparación de modelos")
-compare_toggle = st.sidebar.checkbox("Activar comparación", value=False,
-                                     help="Permite ejecutar varios modelos con la misma preparación de datos y comparar métricas.")
-models_to_compare = []
-compare_clicked = False
-if compare_toggle:
-    all_model_names = list(get_models(seed).keys())
-    models_to_compare = st.sidebar.multiselect("Modelos a comparar", all_model_names, default=all_model_names)
-    compare_clicked = st.sidebar.button("📊 Comparar modelos", type="primary")
 
 SEARCH_N_JOBS = 1 if safe_mode else -1
 
@@ -123,15 +112,17 @@ if col_reset.button("♻️ Limpiar caché"):
 # -------------------------
 with st.expander("What this will do (no compute yet)"):
     st.write(
-        """
-        1) Download & sample the UCI Diabetes 130-US Hospitals dataset
-        2) Feature selection → PCA/MCA (as enabled)
-        3) Stratified train/test split
-        4) Optional rebalancing
-        5) Hyperparameter search (RandomizedSearchCV)
-        6) Metrics + plots + CSV download
-        """
-    )
+    """
+    **¿Qué hace este pipeline?**
+
+    1) Descarga y toma una muestra del dataset **UCI Diabetes 130-US Hospitals**  
+    2) Selección de variables → PCA/MCA (si están habilitados)  
+    3) División entrenamiento/prueba estratificada  
+    4) Rebalanceo opcional de clases  
+    5) Búsqueda de hiperparámetros (RandomizedSearchCV)  
+    6) Métricas + gráficas + descarga de CSV
+    """
+)
 
 # -------------------------
 # Helpers (definitions only; no heavy compute)
@@ -328,6 +319,19 @@ def get_param_spaces(mode):
         "SVM_Linear": {'classifier__C': [0.1, 1, 10]}
     }
     return fast if mode.startswith("Fast") else full
+
+# ---- Comparación de modelos (sidebar) ----
+st.sidebar.divider()
+st.sidebar.subheader("📊 Comparación de modelos")
+compare_toggle = st.sidebar.checkbox("Activar comparación", value=False,
+                                     help="Permite ejecutar varios modelos con la misma preparación de datos y comparar métricas.")
+models_to_compare = []
+compare_clicked = False
+if compare_toggle:
+    all_model_names = list(get_models(seed).keys())
+    models_to_compare = st.sidebar.multiselect("Modelos a comparar", all_model_names, default=all_model_names)
+    compare_clicked = st.sidebar.button("📊 Comparar modelos", type="primary")
+
 
 def build_preprocessor(columns):
     numeric_transformer = Pipeline(steps=[('imputer', SimpleImputer(strategy='mean')),
