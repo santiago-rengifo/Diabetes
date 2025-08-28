@@ -7,9 +7,9 @@ Original file is located at
     https://colab.research.google.com/drive/1aOt9CRonp7QMS4ekEucePpOVlGGBWOWL
 """
 
-# app.py
-# Streamlit wrapper for an interactive Diabetes ML pipeline
-# Robust to missing packages (e.g., mca), heavy grids, and dataset/network hiccups.
+# app.py — Safe-boot Streamlit wrapper for the Diabetes ML pipeline
+# Defers heavy work until "Run pipeline" button is clicked.
+# Shows clear, on-screen errors instead of crashing the server on startup.
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -19,15 +19,11 @@ import pandas as pd
 import streamlit as st
 
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
-
 from sklearn.decomposition import PCA
-# NOTE: do NOT import mca at top; we'll import lazily and guard it
-
 from sklearn.feature_selection import chi2, f_classif
 from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.metrics import (
@@ -45,21 +41,12 @@ from sklearn.utils.class_weight import compute_class_weight
 from scipy.stats import randint, uniform
 
 # -------------------------
-# Streamlit page config
+# Page + error behavior
 # -------------------------
-st.set_page_config(
-    page_title="Diabetes ML – Interactive",
-    page_icon="🩺",
-    layout="wide"
-)
-
+st.set_page_config(page_title="Diabetes ML – Interactive", page_icon="🩺", layout="wide")
 st.title("🩺 Diabetes ML – Interactive Pipeline")
-st.caption("Feature selection → PCA/MCA → Rebalancing → Model training → Metrics & plots")
-
-# Show rich tracebacks if something breaks during render
+st.caption("Safe-boot: press **Run pipeline** to execute. Errors will appear here, not crash the app.")
 st.set_option("client.showErrorDetails", True)
-
-RANDOM_STATE_DEFAULT = 42
 
 def show_and_stop(msg: str, exc: Exception = None):
     st.error(msg)
@@ -67,71 +54,68 @@ def show_and_stop(msg: str, exc: Exception = None):
         st.exception(exc)
     st.stop()
 
-# Try a quick env sanity check
+# Environment sanity line (renders immediately; helps debugging)
 try:
-    import sklearn, numpy, pandas  # noqa
-    st.caption(
-        f"🔎 Env: numpy {np.__version__} | pandas {pd.__version__} | scikit-learn {sklearn.__version__}"
-    )
+    import sklearn
+    st.caption(f"🔎 Env ready — numpy {np.__version__} | pandas {pd.__version__} | scikit-learn {sklearn.__version__}")
 except Exception as e:
-    show_and_stop("Imports failed (numpy/pandas/sklearn). Check requirements.txt.", e)
+    show_and_stop("Environment imports failed. Check requirements.txt.", e)
+
+RANDOM_STATE_DEFAULT = 42
 
 # -------------------------
-# Sidebar controls
+# Sidebar controls (lightweight)
 # -------------------------
 st.sidebar.header("⚙️ Controls")
-
 seed = st.sidebar.number_input("Random Seed", value=RANDOM_STATE_DEFAULT, step=1)
 sample_n = st.sidebar.slider("Sample rows (for speed)", min_value=3000, max_value=100000, value=20000, step=1000)
-
-thresh = st.sidebar.slider("Cumulative importance / variance threshold", min_value=0.70, max_value=0.99, value=0.90, step=0.01)
-
-feat_strategy = st.sidebar.selectbox(
-    "Feature selection strategy",
-    ["Filter (ANOVA for numeric + Chi² for categoricals)", "Embedded (Random Forest)"]
-)
-
+thresh = st.sidebar.slider("Cumulative importance / variance threshold", 0.70, 0.99, 0.90, 0.01)
+feat_strategy = st.sidebar.selectbox("Feature selection strategy",
+                                     ["Filter (ANOVA numeric + Chi² categorical)", "Embedded (Random Forest)"])
 pca_enable = st.sidebar.checkbox("Apply PCA to numeric block", value=True)
 mca_enable = st.sidebar.checkbox("Apply MCA to categorical block", value=True)
-
-# Safe Mode reduces load & avoids fragile steps on small machines
-safe_mode = st.sidebar.toggle("🛟 Safe Mode (skip MCA & heavy search)", value=False)
+safe_mode = st.sidebar.toggle("🛟 Safe Mode (skip MCA & heavy search)", value=True)  # default ON for reliability
 if safe_mode:
-    mca_enable = False  # force off
+    mca_enable = False
 st.sidebar.divider()
-
-balancing = st.sidebar.selectbox(
-    "Rebalancing method",
-    ["None", "class_weight=balanced (if supported)", "SMOTE(k=3)", "ADASYN"]
-)
-
-model_name = st.sidebar.selectbox(
-    "Model",
-    ["RandomForest", "ExtraTrees", "HistGradientBoosting", "LogisticRegression", "SVM_Linear"]
-)
-
+balancing = st.sidebar.selectbox("Rebalancing",
+                                 ["None", "class_weight=balanced (if supported)", "SMOTE(k=3)", "ADASYN"])
+model_name = st.sidebar.selectbox("Model",
+                                  ["RandomForest", "ExtraTrees", "HistGradientBoosting", "LogisticRegression", "SVM_Linear"])
 param_mode = st.sidebar.radio("Hyperparameter search", ["Fast (quick grids)", "Full (wider grids)"], index=0)
-n_iter = st.sidebar.slider("RandomizedSearch n_iter", min_value=5, max_value=50, value=10, step=5)
-cv_folds = st.sidebar.slider("CV folds", min_value=3, max_value=10, value=3, step=1)
-test_size = st.sidebar.slider("Test size", min_value=0.1, max_value=0.4, value=0.25, step=0.05)
-
-# Tame CPU usage if Safe Mode
+n_iter = st.sidebar.slider("RandomizedSearch n_iter", 5, 50, 10, 5)
+cv_folds = st.sidebar.slider("CV folds", 3, 10, 3, 1)
+test_size = st.sidebar.slider("Test size", 0.1, 0.4, 0.25, 0.05)
 SEARCH_N_JOBS = 1 if safe_mode else -1
 
-st.sidebar.markdown("---")
-st.sidebar.caption("- Reduce sample size for speed\n- Use *Fast* grids first\n- MCA can be slow on many categories")
+# Run button
+col_run, col_reset = st.columns([1,1])
+run_clicked = col_run.button("▶️ Run pipeline", type="primary")
+if col_reset.button("♻️ Clear cache"):
+    st.cache_data.clear()
+    st.rerun()
 
 # -------------------------
-# Data loading (cached)
+# Lightweight previews (no heavy work yet)
+# -------------------------
+with st.expander("What this will do (no compute yet)"):
+    st.write(
+        """
+        1) Download & sample the UCI Diabetes 130-US Hospitals dataset
+        2) Feature selection → PCA/MCA (as enabled)
+        3) Stratified train/test split
+        4) Optional rebalancing
+        5) Hyperparameter search (RandomizedSearchCV)
+        6) Metrics + plots + CSV download
+        """
+    )
+
+# -------------------------
+# Helpers (definitions only; no heavy compute)
 # -------------------------
 @st.cache_data(show_spinner=False)
 def load_data(seed: int, sample_n: int):
-    # Using UCI "Diabetes 130-US Hospitals" dataset via ucimlrepo
-    try:
-        from ucimlrepo import fetch_ucirepo
-    except Exception as e:
-        raise RuntimeError("`ucimlrepo` is not installed or cannot be imported.") from e
-
+    from ucimlrepo import fetch_ucirepo
     try:
         ds = fetch_ucirepo(id=296)
     except Exception as e:
@@ -156,52 +140,20 @@ def load_data(seed: int, sample_n: int):
         X_raw = X_raw.reset_index(drop=True)
         y_raw = y_raw.reset_index(drop=True)
 
-    # Split by dtype
     X_num = X_raw.select_dtypes(include=[np.number]).copy()
     X_cat = X_raw.select_dtypes(include=['object', 'category']).copy()
     return X_raw, y_raw, X_num, X_cat
 
-try:
-    with st.spinner("Loading dataset..."):
-        X_raw, y_raw, X_num, X_cat = load_data(seed, sample_n)
-except Exception as e:
-    show_and_stop("Dataset load failed.", e)
-
-# Encode target
-try:
-    y_series = y_raw.iloc[:, 0].astype(str)
-except Exception as e:
-    show_and_stop("Could not read target column from dataset.", e)
-
-le_original = LabelEncoder().fit(y_series)
-y_enc = le_original.transform(y_series)
-class_names = list(le_original.classes_)
-
-st.subheader("Dataset snapshot")
-c1, c2, c3 = st.columns(3)
-c1.metric("Rows", len(X_raw))
-c2.metric("Numeric cols", X_num.shape[1])
-c3.metric("Categorical cols", X_cat.shape[1])
-st.dataframe(pd.concat([X_num.head(3), X_cat.head(3)], axis=1))
-
-with st.expander("Class distribution (full sample)"):
-    st.write(pd.Series(y_series).value_counts())
-
-# -------------------------
-# Helpers
-# -------------------------
 def prepare_blocks(X_num: pd.DataFrame, X_cat: pd.DataFrame):
     Xnum_imp = X_num.copy()
     for c in Xnum_imp.columns:
         if not np.issubdtype(Xnum_imp[c].dtype, np.number):
             Xnum_imp[c] = pd.to_numeric(Xnum_imp[c], errors='coerce')
     Xnum_imp = Xnum_imp.fillna(Xnum_imp.median(numeric_only=True))
-
     Xcat_imp = X_cat.fillna('Missing').astype(str)
     return Xnum_imp, Xcat_imp
 
 def filter_selection(Xnum_imp, Xcat_imp, y_enc, thresh):
-    # Categorical: aggregate Chi² scores by original variable
     Xcat_dum_all = pd.get_dummies(Xcat_imp, drop_first=False, prefix_sep='=')
     chi2_scores, _ = chi2(Xcat_dum_all.fillna(0), y_enc)
     var_of_dummy = Xcat_dum_all.columns.to_series().str.split('=', n=1, expand=True)[0]
@@ -218,7 +170,6 @@ def filter_selection(Xnum_imp, Xcat_imp, y_enc, thresh):
     X_cat_sel = Xcat_imp[cat_vars_sel]
     X_cat_sel_dum = pd.get_dummies(X_cat_sel, drop_first=True, prefix_sep='=')
 
-    # Numeric: ANOVA F
     F_scores, _ = f_classif(Xnum_imp, y_enc)
     num_importance = pd.Series(F_scores, index=Xnum_imp.columns).sort_values(ascending=False)
     cum_num = num_importance.cumsum() / num_importance.sum()
@@ -236,12 +187,11 @@ def filter_selection(Xnum_imp, Xcat_imp, y_enc, thresh):
         "var_importance_cat": var_importance_cat,
         "num_importance": num_importance
     }
-    return df_filtrado, details, X_cat_sel  # X_cat_sel (strings) for MCA
+    return df_filtrado, details, X_cat_sel
 
 def embedded_rf_selection(Xnum_imp, Xcat_imp, y_enc, thresh, seed):
     Xcat_dum_all = pd.get_dummies(Xcat_imp, drop_first=False, prefix_sep='=').fillna(0)
     X_complete = pd.concat([Xnum_imp, Xcat_dum_all], axis=1)
-
     rf = RandomForestClassifier(n_estimators=200, random_state=seed, n_jobs=-1)
     rf.fit(X_complete, y_enc)
     importances = rf.feature_importances_
@@ -251,7 +201,6 @@ def embedded_rf_selection(Xnum_imp, Xcat_imp, y_enc, thresh, seed):
     selected_cols = X_complete.columns[idx][:cutoff]
     df_filtrado = X_complete[selected_cols].copy()
 
-    # For MCA we still need the original categorical subset names
     cat_cols = [c for c in selected_cols if c in Xcat_dum_all.columns]
     base_cats = sorted(set([c.split('=')[0] for c in cat_cols]))
     X_cat_sel = Xcat_imp[base_cats] if base_cats else pd.DataFrame(index=Xcat_imp.index)
@@ -264,10 +213,8 @@ def embedded_rf_selection(Xnum_imp, Xcat_imp, y_enc, thresh, seed):
     return df_filtrado, details, X_cat_sel
 
 def pca_mca_blocks(df_filtrado, X_cat_sel, apply_pca, apply_mca, thresh, seed):
-    parts = []
-    info = {}
+    parts, info = [], {}
 
-    # PCA for numeric part of df_filtrado
     if apply_pca:
         df_num = df_filtrado.select_dtypes(include=[np.number])
         if df_num.shape[1] > 0:
@@ -277,53 +224,35 @@ def pca_mca_blocks(df_filtrado, X_cat_sel, apply_pca, apply_mca, thresh, seed):
             cum = np.cumsum(p.explained_variance_ratio_)
             r = int(np.searchsorted(cum, thresh) + 1)
             Xp = p.transform(Xn)[:, :r]
-            pca_cols = [f"PC{i+1}" for i in range(r)]
-            parts.append(pd.DataFrame(Xp, columns=pca_cols, index=df_filtrado.index))
-            info["pca_kept"] = r
-            info["pca_var"] = float(cum[r-1])
+            parts.append(pd.DataFrame(Xp, columns=[f"PC{i+1}" for i in range(r)], index=df_filtrado.index))
+            info["pca_kept"], info["pca_var"] = r, float(cum[r-1])
         else:
-            info["pca_kept"] = 0
-            info["pca_var"] = 0.0
+            info["pca_kept"], info["pca_var"] = 0, 0.0
     else:
-        info["pca_kept"] = 0
-        info["pca_var"] = 0.0
+        info["pca_kept"], info["pca_var"] = 0, 0.0
 
-    # MCA for selected original categorical columns (guarded)
     if apply_mca and X_cat_sel is not None and X_cat_sel.shape[1] > 0:
         try:
             import mca as mca_lib
-            Xcat_imp = X_cat_sel.fillna('Missing').astype(str)
-            Xcat_dum = pd.get_dummies(Xcat_imp, drop_first=False, prefix_sep='=')
+            Xcat_dum = pd.get_dummies(X_cat_sel.fillna('Missing').astype(str), drop_first=False, prefix_sep='=')
             m = mca_lib.MCA(Xcat_dum, benzecri=True)
-            sv = m.s
-            eig = sv ** 2
-            expl = eig / eig.sum()
-            cum = np.cumsum(expl)
+            sv = m.s; eig = sv ** 2; expl = eig / eig.sum(); cum = np.cumsum(expl)
             r = int(np.searchsorted(cum, thresh) + 1)
             try:
                 F = m.fs_r(N=r)
             except Exception:
                 F = m.fs_r()[:, :r]
-            mca_cols = [f"MCA{i+1}" for i in range(r)]
-            parts.append(pd.DataFrame(F, columns=mca_cols, index=X_cat_sel.index))
-            info["mca_kept"] = r
-            info["mca_var"] = float(cum[r-1])
+            parts.append(pd.DataFrame(F, columns=[f"MCA{i+1}" for i in range(r)], index=X_cat_sel.index))
+            info["mca_kept"], info["mca_var"] = r, float(cum[r-1])
         except Exception as e:
             st.warning(f"MCA skipped (error: {e}).")
-            info["mca_kept"] = 0
-            info["mca_var"] = 0.0
+            info["mca_kept"], info["mca_var"] = 0, 0.0
     else:
         if apply_mca:
             st.caption("MCA disabled: no categorical columns selected.")
-        info["mca_kept"] = 0 if not apply_mca else info.get("mca_kept", 0)
-        info["mca_var"] = 0.0 if not apply_mca else info.get("mca_var", 0.0)
+        info.setdefault("mca_kept", 0); info.setdefault("mca_var", 0.0)
 
-    if parts:
-        df_combined = pd.concat(parts, axis=1)
-    else:
-        # If neither PCA nor MCA produced components, fall back to df_filtrado
-        df_combined = df_filtrado.copy()
-
+    df_combined = pd.concat(parts, axis=1) if parts else df_filtrado.copy()
     return df_combined, info
 
 def get_models(seed):
@@ -369,46 +298,26 @@ def get_param_spaces(mode):
         }
     }
     fast = {
-        "RandomForest": {
-            'classifier__n_estimators': [100, 200],
-            'classifier__max_depth': [10, 20],
-        },
-        "ExtraTrees": {
-            'classifier__n_estimators': [100, 200],
-            'classifier__max_depth': [10, 20],
-        },
-        "HistGradientBoosting": {
-            'classifier__max_iter': [60, 120],
-            'classifier__learning_rate': [0.1, 0.2],
-        },
-        "LogisticRegression": {
-            'classifier__C': [0.1, 1, 10],
-            'classifier__penalty': ['l2'],
-            'classifier__solver': ['liblinear']
-        },
-        "SVM_Linear": {
-            'classifier__C': [0.1, 1, 10]
-        }
+        "RandomForest": {'classifier__n_estimators': [100, 200], 'classifier__max_depth': [10, 20]},
+        "ExtraTrees":  {'classifier__n_estimators': [100, 200], 'classifier__max_depth': [10, 20]},
+        "HistGradientBoosting": {'classifier__max_iter': [60, 120], 'classifier__learning_rate': [0.1, 0.2]},
+        "LogisticRegression": {'classifier__C': [0.1, 1, 10], 'classifier__penalty': ['l2'], 'classifier__solver': ['liblinear']},
+        "SVM_Linear": {'classifier__C': [0.1, 1, 10]}
     }
     return fast if mode.startswith("Fast") else full
 
 def build_preprocessor(columns):
-    numeric_transformer = Pipeline(steps=[
-        ('imputer', SimpleImputer(strategy='mean')),
-        ('scaler', StandardScaler())
-    ])
+    numeric_transformer = Pipeline(steps=[('imputer', SimpleImputer(strategy='mean')),
+                                          ('scaler', StandardScaler())])
     preprocessor = ColumnTransformer(transformers=[('num', numeric_transformer, columns)])
     return preprocessor
 
 def apply_balancing_choice(balancing, model, y_train):
-    steps = []
-    info = ""
+    steps, info = [], ""
     if balancing == "SMOTE(k=3)":
-        steps.append(('balancer', SMOTE(random_state=RANDOM_STATE_DEFAULT, k_neighbors=3)))
-        info = "SMOTE(k=3)"
+        steps.append(('balancer', SMOTE(random_state=RANDOM_STATE_DEFAULT, k_neighbors=3))); info = "SMOTE(k=3)"
     elif balancing == "ADASYN":
-        steps.append(('balancer', ADASYN(random_state=RANDOM_STATE_DEFAULT)))
-        info = "ADASYN"
+        steps.append(('balancer', ADASYN(random_state=RANDOM_STATE_DEFAULT))); info = "ADASYN"
     elif balancing == "class_weight=balanced (if supported)":
         if hasattr(model, "class_weight"):
             weights = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
@@ -421,188 +330,192 @@ def apply_balancing_choice(balancing, model, y_train):
     return steps, info
 
 # -------------------------
-# Preprocess + feature selection
+# Heavy work inside button
 # -------------------------
-Xnum_imp, Xcat_imp = prepare_blocks(X_num, X_cat)
+if run_clicked:
+    try:
+        with st.spinner("Loading dataset..."):
+            X_raw, y_raw, X_num, X_cat = load_data(seed, sample_n)
+    except Exception as e:
+        show_and_stop("Dataset load failed.", e)
 
-with st.spinner("Selecting features..."):
+    # Encode target
+    try:
+        y_series = y_raw.iloc[:, 0].astype(str)
+    except Exception as e:
+        show_and_stop("Could not read target column from dataset.", e)
+
+    le_original = LabelEncoder().fit(y_series)
+    y_enc = le_original.transform(y_series)
+    class_names = list(le_original.classes_)
+
+    st.subheader("Dataset snapshot")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Rows", len(X_raw))
+    c2.metric("Numeric cols", X_num.shape[1])
+    c3.metric("Categorical cols", X_cat.shape[1])
+    st.dataframe(pd.concat([X_num.head(3), X_cat.head(3)], axis=1))
+    with st.expander("Class distribution (full sample)"):
+        st.write(pd.Series(y_series).value_counts())
+
+    # Preprocess + feature selection
+    Xnum_imp, Xcat_imp = prepare_blocks(X_num, X_cat)
+    with st.spinner("Selecting features..."):
+        if feat_strategy.startswith("Filter"):
+            df_filtrado, details, X_cat_sel_for_mca = filter_selection(Xnum_imp, Xcat_imp, y_enc, thresh)
+        else:
+            df_filtrado, details, X_cat_sel_for_mca = embedded_rf_selection(Xnum_imp, Xcat_imp, y_enc, thresh, seed)
+
+    st.subheader("Selected features")
+    st.write(f"Resulting matrix: {df_filtrado.shape[0]} rows × {df_filtrado.shape[1]} columns")
     if feat_strategy.startswith("Filter"):
-        df_filtrado, details, X_cat_sel_for_mca = filter_selection(Xnum_imp, Xcat_imp, y_enc, thresh)
+        st.caption(f"🧮 Numeric kept: {len(details['num_vars_sel'])} | Categorical kept: {len(details['cat_vars_sel'])} → dummies: {details['dummies_cat']}")
     else:
-        df_filtrado, details, X_cat_sel_for_mca = embedded_rf_selection(Xnum_imp, Xcat_imp, y_enc, thresh, seed)
+        st.caption(f"🧠 Embedded RF kept top {len(details['selected_features'])} features (≥ {int(thresh*100)}% cumulative importance)")
 
-st.subheader("Selected features")
-st.write(f"Resulting matrix: {df_filtrado.shape[0]} rows × {df_filtrado.shape[1]} columns")
-if feat_strategy.startswith("Filter"):
-    st.caption(f"🧮 Numeric kept: {len(details['num_vars_sel'])} | Categorical kept: {len(details['cat_vars_sel'])} → dummies: {details['dummies_cat']}")
-else:
-    st.caption(f"🧠 Embedded RF kept top {len(details['selected_features'])} features (≥ {int(thresh*100)}% cumulative importance)")
+    with st.expander("Top importances / stats"):
+        if feat_strategy.startswith("Filter"):
+            st.write("Top categorical (Chi² aggregated):"); st.write(details['var_importance_cat'].head(15))
+            st.write("Top numeric (ANOVA F):"); st.write(details['num_importance'].head(15))
+        else:
+            st.write("Top RF importances:"); st.write(details['rf_importances_sorted'].head(25))
 
-with st.expander("Top importances / stats"):
-    if feat_strategy.startswith("Filter"):
-        st.write("Top categorical (Chi² aggregated):")
-        st.write(details['var_importance_cat'].head(15))
-        st.write("Top numeric (ANOVA F):")
-        st.write(details['num_importance'].head(15))
+    with st.spinner("Computing PCA/MCA blocks..."):
+        df_combined, decomp_info = pca_mca_blocks(df_filtrado, X_cat_sel_for_mca, pca_enable, mca_enable, thresh, seed)
+
+    st.subheader("Dimensionality reduction")
+    st.write(f"Combined matrix used for training: {df_combined.shape}")
+    colA, colB = st.columns(2)
+    colA.caption(f"PCA kept: {decomp_info.get('pca_kept', 0)} comps (var≈{decomp_info.get('pca_var', 0):.3f})")
+    colB.caption(f"MCA kept: {decomp_info.get('mca_kept', 0)} dims (var≈{decomp_info.get('mca_var', 0):.3f})")
+
+    if df_combined.shape[1] >= 2:
+        with st.expander("PC1 vs PC2 / MCA1 vs MCA2 scatter (first two columns of combined)"):
+            fig, ax = plt.subplots(figsize=(5.5, 5))
+            ax.scatter(df_combined.iloc[:, 0], df_combined.iloc[:, 1], c=y_enc, alpha=0.6)
+            ax.set_xlabel(df_combined.columns[0]); ax.set_ylabel(df_combined.columns[1])
+            ax.set_title("First two components (combined)")
+            st.pyplot(fig)
+
+    # Train / test split
+    X_train, X_test, y_train, y_test = train_test_split(
+        df_combined, y_enc, test_size=test_size, stratify=y_enc, random_state=seed
+    )
+
+    st.subheader("Train/Test split")
+    c1, c2 = st.columns(2)
+    c1.write(f"X_train: {X_train.shape}, y_train: {pd.Series(y_train).value_counts().to_dict()}")
+    c2.write(f"X_test: {X_test.shape}, y_test: {pd.Series(y_test).value_counts().to_dict()}")
+
+    # Build pipeline + search
+    models = get_models(seed)
+    clf = models[model_name]
+    preprocessor = build_preprocessor(df_combined.columns.tolist())
+    balance_steps, balance_info = apply_balancing_choice(balancing, clf, y_train)
+    Pipe = ImbPipeline if any(s[0] == 'balancer' for s in balance_steps) else Pipeline
+    pipeline = Pipe([('preprocessor', preprocessor), *balance_steps, ('classifier', clf)])
+
+    param_spaces = get_param_spaces(param_mode)
+    param_grid = dict(param_spaces.get(model_name, {}))  # copy
+
+    # prune unsupported params (prevents search crash)
+    supported = set(clf.get_params().keys())
+    pruned_grid = {}
+    for k, v in param_grid.items():
+        suffix = k.split("__", 1)[-1]
+        if suffix in supported:
+            pruned_grid[k] = v
+        else:
+            st.warning(f"Dropping unsupported param for {model_name}: {k}")
+    param_grid = pruned_grid
+
+    # soften grids in safe mode
+    if safe_mode:
+        for k in list(param_grid.keys()):
+            vals = param_grid[k]
+            if isinstance(vals, list):
+                param_grid[k] = vals[:2]
+        n_iter_local = min(n_iter, 5)
+        cv_folds_local = min(cv_folds, 3)
+        n_jobs_local = 1
     else:
-        st.write("Top RF importances:")
-        st.write(details['rf_importances_sorted'].head(25))
+        n_iter_local, cv_folds_local, n_jobs_local = n_iter, cv_folds, SEARCH_N_JOBS
 
-# -------------------------
-# PCA + MCA
-# -------------------------
-with st.spinner("Computing PCA/MCA blocks..."):
-    df_combined, decomp_info = pca_mca_blocks(df_filtrado, X_cat_sel_for_mca, pca_enable, mca_enable, thresh, seed)
-
-st.subheader("Dimensionality reduction")
-st.write(f"Combined matrix used for training: {df_combined.shape}")
-colA, colB = st.columns(2)
-colA.caption(f"PCA kept: {decomp_info.get('pca_kept', 0)} comps (var≈{decomp_info.get('pca_var', 0):.3f})")
-colB.caption(f"MCA kept: {decomp_info.get('mca_kept', 0)} dims (var≈{decomp_info.get('mca_var', 0):.3f})")
-
-if df_combined.shape[1] >= 2:
-    with st.expander("PC1 vs PC2 / MCA1 vs MCA2 scatter (first two columns of combined)"):
-        fig, ax = plt.subplots(figsize=(5.5, 5))
-        ax.scatter(df_combined.iloc[:, 0], df_combined.iloc[:, 1], c=y_enc, alpha=0.6)
-        ax.set_xlabel(df_combined.columns[0]); ax.set_ylabel(df_combined.columns[1])
-        ax.set_title("First two components (combined)")
-        st.pyplot(fig)
-
-# -------------------------
-# Train / test split
-# -------------------------
-X_train, X_test, y_train, y_test = train_test_split(
-    df_combined, y_enc, test_size=test_size, stratify=y_enc, random_state=seed
-)
-
-st.subheader("Train/Test split")
-c1, c2 = st.columns(2)
-c1.write(f"X_train: {X_train.shape}, y_train: {pd.Series(y_train).value_counts().to_dict()}")
-c2.write(f"X_test: {X_test.shape}, y_test: {pd.Series(y_test).value_counts().to_dict()}")
-
-# -------------------------
-# Build pipeline + search (hardened)
-# -------------------------
-models = get_models(seed)
-clf = models[model_name]
-preprocessor = build_preprocessor(df_combined.columns.tolist())
-
-balance_steps, balance_info = apply_balancing_choice(balancing, clf, y_train)
-Pipe = ImbPipeline if any(s[0] == 'balancer' for s in balance_steps) else Pipeline
-pipeline = Pipe([('preprocessor', preprocessor), *balance_steps, ('classifier', clf)])
-
-param_spaces = get_param_spaces(param_mode)
-param_grid = dict(param_spaces.get(model_name, {}))  # copy
-
-# prune unsupported params (prevents search crash)
-supported = set(clf.get_params().keys())
-pruned_grid = {}
-for k, v in param_grid.items():
-    suffix = k.split("__", 1)[-1]
-    if suffix in supported:
-        pruned_grid[k] = v
-    else:
-        st.warning(f"Dropping unsupported param for {model_name}: {k}")
-param_grid = pruned_grid
-
-# If Safe Mode, soften grids
-if safe_mode:
-    # reduce widths for speed
-    for k in list(param_grid.keys()):
-        vals = param_grid[k]
-        if hasattr(vals, "__iter__") and not isinstance(vals, dict):
-            param_grid[k] = list(vals)[:2] if isinstance(vals, list) else vals
-    n_iter = min(n_iter, 5)
-    cv_folds = min(cv_folds, 3)
-
-# Train
-st.subheader("Training")
-with st.spinner(f"Training {model_name} ({param_mode})..."):
-    if param_grid:
-        try:
-            search = RandomizedSearchCV(
-                pipeline,
-                param_distributions=param_grid,
-                n_iter=n_iter,
-                cv=cv_folds,
-                scoring='f1_macro',
-                random_state=seed,
-                n_jobs=SEARCH_N_JOBS,
-                error_score='raise'
-            )
-            search.fit(X_train, y_train)
-            best_model = search.best_estimator_
-            best_cv = search.best_score_
-            st.success(f"Best CV f1_macro: {best_cv:.4f}")
-            st.caption(f"Best params: {search.best_params_}")
-        except Exception as e:
-            st.warning("Hyperparameter search failed; fitting default pipeline.")
-            st.exception(e)
+    # Train
+    st.subheader("Training")
+    with st.spinner(f"Training {model_name} ({param_mode})..."):
+        if param_grid:
+            try:
+                search = RandomizedSearchCV(
+                    pipeline,
+                    param_distributions=param_grid,
+                    n_iter=n_iter_local,
+                    cv=cv_folds_local,
+                    scoring='f1_macro',
+                    random_state=seed,
+                    n_jobs=n_jobs_local,
+                    error_score='raise'
+                )
+                search.fit(X_train, y_train)
+                best_model = search.best_estimator_
+                best_cv = search.best_score_
+                st.success(f"Best CV f1_macro: {best_cv:.4f}")
+                st.caption(f"Best params: {search.best_params_}")
+            except Exception as e:
+                st.warning("Hyperparameter search failed; fitting default pipeline.")
+                st.exception(e)
+                pipeline.fit(X_train, y_train)
+                best_model = pipeline
+        else:
             pipeline.fit(X_train, y_train)
             best_model = pipeline
-            best_cv = None
-    else:
-        pipeline.fit(X_train, y_train)
-        best_model = pipeline
-        best_cv = None
 
-# -------------------------
-# Evaluation
-# -------------------------
-st.subheader("Evaluation on Test Set")
-try:
-    y_pred = best_model.predict(X_test)
-except Exception as e:
-    show_and_stop("Prediction failed.", e)
-
-proba_ok = hasattr(best_model, "predict_proba")
-y_proba = None
-if proba_ok:
+    # Evaluate
+    st.subheader("Evaluation on Test Set")
     try:
-        y_proba = best_model.predict_proba(X_test)
+        y_pred = best_model.predict(X_test)
     except Exception as e:
-        st.warning(f"predict_proba failed for {model_name}: {e}")
-        y_proba = None
+        show_and_stop("Prediction failed.", e)
 
-report = classification_report(y_test, y_pred, target_names=class_names, output_dict=False, zero_division=0)
-st.text(report)
+    proba_ok, y_proba = hasattr(best_model, "predict_proba"), None
+    if proba_ok:
+        try:
+            y_proba = best_model.predict_proba(X_test)
+        except Exception as e:
+            st.warning(f"predict_proba failed: {e}")
 
-cm = confusion_matrix(y_test, y_pred)
-fig_cm, ax_cm = plt.subplots(figsize=(6, 5))
-disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
-disp.plot(cmap="Blues", values_format='d', ax=ax_cm, colorbar=False)
-ax_cm.set_title(f"Confusion Matrix – {model_name}")
-st.pyplot(fig_cm)
+    report = classification_report(y_test, y_pred, target_names=class_names, output_dict=False, zero_division=0)
+    st.text(report)
 
-# ROC (only if binary and we have probs)
-if y_proba is not None and len(np.unique(y_test)) == 2:
-    fpr, tpr, _ = roc_curve(y_test, y_proba[:, 1])
-    roc_auc = auc(fpr, tpr)
-    fig_roc, ax_roc = plt.subplots(figsize=(6, 5))
-    ax_roc.plot(fpr, tpr, lw=2, label=f"AUC={roc_auc:.3f}")
-    ax_roc.plot([0, 1], [0, 1], linestyle="--")
-    ax_roc.set_xlabel("FPR"); ax_roc.set_ylabel("TPR"); ax_roc.legend()
-    ax_roc.set_title("ROC Curve (binary only)")
-    st.pyplot(fig_roc)
+    cm = confusion_matrix(y_test, y_pred)
+    fig_cm, ax_cm = plt.subplots(figsize=(6, 5))
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
+    disp.plot(cmap="Blues", values_format='d', ax=ax_cm, colorbar=False)
+    ax_cm.set_title(f"Confusion Matrix – {model_name}")
+    st.pyplot(fig_cm)
+
+    if y_proba is not None and len(np.unique(y_test)) == 2:
+        fpr, tpr, _ = roc_curve(y_test, y_proba[:, 1])
+        roc_auc = auc(fpr, tpr)
+        fig_roc, ax_roc = plt.subplots(figsize=(6, 5))
+        ax_roc.plot(fpr, tpr, lw=2, label=f"AUC={roc_auc:.3f}")
+        ax_roc.plot([0, 1], [0, 1], linestyle="--")
+        ax_roc.set_xlabel("FPR"); ax_roc.set_ylabel("TPR"); ax_roc.legend()
+        ax_roc.set_title("ROC Curve (binary only)")
+        st.pyplot(fig_roc)
+    else:
+        st.caption("ROC not shown (multi-class or no predict_proba).")
+
+    # Download
+    out = pd.DataFrame({"y_true": y_test, "y_pred": y_pred})
+    if y_proba is not None:
+        out = pd.concat([out.reset_index(drop=True),
+                         pd.DataFrame(y_proba, columns=[f"p_{c}" for c in range(y_proba.shape[1])])], axis=1)
+    st.download_button("⬇️ Download test predictions (CSV)",
+                       data=out.to_csv(index=False).encode("utf-8"),
+                       file_name="predictions_test.csv", mime="text/csv")
+
+    st.markdown("---")
+    st.caption(f"Model: **{model_name}** | Balancing: **{balancing}** | Search: **{param_mode}** | Seed: **{seed}** | Safe Mode: **{safe_mode}**")
 else:
-    st.caption("ROC not shown (multi-class or no predict_proba).")
-
-# Download predictions
-out = pd.DataFrame({
-    "y_true": [class_names[i] for i in y_test],
-    "y_pred": [class_names[i] for i in y_pred]
-})
-if y_proba is not None:
-    proba_df = pd.DataFrame(y_proba, columns=[f"p_{c}" for c in class_names])
-    out = pd.concat([out.reset_index(drop=True), proba_df.reset_index(drop=True)], axis=1)
-
-st.download_button(
-    "⬇️ Download test predictions (CSV)",
-    data=out.to_csv(index=False).encode("utf-8"),
-    file_name="predictions_test.csv",
-    mime="text/csv"
-)
-
-# Meta
-st.markdown("---")
-st.caption(f"Model: **{model_name}** | Balancing: **{balance_info}** | Search: **{param_mode}** | Seed: **{seed}** | Safe Mode: **{safe_mode}**")
+    st.info("Press **Run pipeline** to execute the workflow. (This keeps the server light and avoids startup crashes.)")
