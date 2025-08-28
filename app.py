@@ -134,9 +134,22 @@ def import_ml_libraries():
         'IMBALANCED_AVAILABLE': IMBALANCED_AVAILABLE
     }
 
-# Cargar librerías
-ml_libs = import_ml_libraries()
 
+# ==== Lazy loader for ML libs (prevents crash on missing deps) ====
+def get_ml_libs():
+    """Carga perezosa de librerías de ML. Si falla, muestra un mensaje y retorna None."""
+    if 'ml_libs' in st.session_state:
+        return st.session_state['ml_libs']
+    try:
+        libs = import_ml_libraries()
+        st.session_state['ml_libs'] = libs
+        return libs
+    except Exception as e:
+        st.session_state['ml_libs_error'] = str(e)
+        return None
+
+# Cargar librerías
+# (lazy) ml_libs will be loaded via get_ml_libs()
 # Configuración global
 RANDOM_STATE = 42
 np.random.seed(RANDOM_STATE)
@@ -172,6 +185,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def main():
+    st.set_page_config(page_title='Diabetes ML', layout='wide', initial_sidebar_state='expanded')
+    st.title('🩺 Diabetes ML — Panel')
     st.title("🩺 Análisis de Diabetes - Pipeline de Machine Learning")
     st.markdown("---")
 
@@ -225,6 +240,12 @@ def cargar_datos_diabetes():
         return None, None
 
 def seccion_carga_datos():
+    ml_libs = get_ml_libs()
+    if ml_libs is None:
+        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
+        if 'ml_libs_error' in st.session_state:
+            st.code(st.session_state['ml_libs_error'])
+        return
     st.header("📊 Carga y Exploración de Datos")
 
     col1, col2 = st.columns([2, 1])
@@ -342,6 +363,12 @@ def seccion_carga_datos():
 
 
 def seccion_preprocesamiento():
+    ml_libs = get_ml_libs()
+    if ml_libs is None:
+        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
+        if 'ml_libs_error' in st.session_state:
+            st.code(st.session_state['ml_libs_error'])
+        return
     st.header("🔧 Preprocesamiento de Datos")
 
     if 'X_raw' not in st.session_state:
@@ -638,6 +665,12 @@ def seccion_preprocesamiento():
                 st.info("La curva ROC solo está disponible para clasificación binaria con probabilidades.")
 
 def seccion_comparacion_modelos():
+    ml_libs = get_ml_libs()
+    if ml_libs is None:
+        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
+        if 'ml_libs_error' in st.session_state:
+            st.code(st.session_state['ml_libs_error'])
+        return
     st.header("🏆 Comparación de Modelos")
 
     if 'feature_selection_results' not in st.session_state:
@@ -840,6 +873,12 @@ def seccion_comparacion_modelos():
         mostrar_resultados_comparacion()
 
 def mostrar_resultados_comparacion():
+    ml_libs = get_ml_libs()
+    if ml_libs is None:
+        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
+        if 'ml_libs_error' in st.session_state:
+            st.code(st.session_state['ml_libs_error'])
+        return
     """Muestra los resultados de la comparación de modelos"""
     if 'resultados_comparacion' not in st.session_state:
         return
@@ -952,6 +991,12 @@ def mostrar_resultados_comparacion():
                     st.plotly_chart(fig, use_container_width=True)
 
 def seccion_resultados():
+    ml_libs = get_ml_libs()
+    if ml_libs is None:
+        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
+        if 'ml_libs_error' in st.session_state:
+            st.code(st.session_state['ml_libs_error'])
+        return
     st.header("📈 Resultados y Visualizaciones")
 
     # Verificar si hay resultados disponibles
@@ -975,6 +1020,12 @@ def seccion_resultados():
         mostrar_visualizaciones_comparacion()
 
 def mostrar_resultados_individuales():
+    ml_libs = get_ml_libs()
+    if ml_libs is None:
+        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
+        if 'ml_libs_error' in st.session_state:
+            st.code(st.session_state['ml_libs_error'])
+        return
     """Muestra resultados detallados del modelo individual"""
     resultado = st.session_state['resultado_individual']
     label_encoder = st.session_state['label_encoder']
@@ -1298,6 +1349,12 @@ def mostrar_resultados_individuales():
                 st.metric(metric, value)
 
 def mostrar_visualizaciones_comparacion():
+    ml_libs = get_ml_libs()
+    if ml_libs is None:
+        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
+        if 'ml_libs_error' in st.session_state:
+            st.code(st.session_state['ml_libs_error'])
+        return
     """Muestra visualizaciones avanzadas de la comparación"""
     if 'resultados_comparacion' not in st.session_state:
         return
@@ -1564,6 +1621,12 @@ def mostrar_visualizaciones_comparacion():
 # Función principal para ejecutar la aplicación
 
 def seccion_seleccion_caracteristicas():
+    ml_libs = get_ml_libs()
+    if ml_libs is None:
+        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
+        if 'ml_libs_error' in st.session_state:
+            st.code(st.session_state['ml_libs_error'])
+        return
     st.header("📉 Selección de Características")
 
     if 'X_num_scaled' not in st.session_state:
@@ -1756,6 +1819,12 @@ def seccion_seleccion_caracteristicas():
 
 
 def seccion_modelado_individual():
+    ml_libs = get_ml_libs()
+    if ml_libs is None:
+        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
+        if 'ml_libs_error' in st.session_state:
+            st.code(st.session_state['ml_libs_error'])
+        return
     st.header("🤖 Modelado Individual")
 
     # Verificar dependencias del pipeline
