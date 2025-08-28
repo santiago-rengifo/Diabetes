@@ -43,9 +43,9 @@ from scipy.stats import randint, uniform
 # -------------------------
 # Page + error behavior
 # -------------------------
-st.set_page_config(page_title="Diabetes ML – Interactive", page_icon="🩺", layout="wide")
-st.title("🩺 Diabetes ML – Interactive Pipeline")
-st.caption("Safe-boot: press **Run pipeline** to execute. Errors will appear here, not crash the app.")
+st.set_page_config(page_title="Diabetes ML – Pipeline Interactivo", page_icon="🩺", layout="wide")
+st.title("🩺 Diabetes ML – Pipeline Interactivo")
+st.caption("Arranque seguro: pulsa **Ejecutar pipeline** para correr. Los errores aparecerán aquí sin tumbar la app.")
 st.set_option("client.showErrorDetails", True)
 
 def show_and_stop(msg: str, exc: Exception = None):
@@ -66,32 +66,55 @@ RANDOM_STATE_DEFAULT = 42
 # -------------------------
 # Sidebar controls (lightweight)
 # -------------------------
-st.sidebar.header("⚙️ Controls")
-seed = st.sidebar.number_input("Random Seed", value=RANDOM_STATE_DEFAULT, step=1)
-sample_n = st.sidebar.slider("Sample rows (for speed)", min_value=3000, max_value=100000, value=20000, step=1000)
-thresh = st.sidebar.slider("Cumulative importance / variance threshold", 0.70, 0.99, 0.90, 0.01)
-feat_strategy = st.sidebar.selectbox("Feature selection strategy",
-                                     ["Filter (ANOVA numeric + Chi² categorical)", "Embedded (Random Forest)"])
-pca_enable = st.sidebar.checkbox("Apply PCA to numeric block", value=True)
-mca_enable = st.sidebar.checkbox("Apply MCA to categorical block", value=True)
-safe_mode = st.sidebar.toggle("🛟 Safe Mode (skip MCA & heavy search)", value=True)  # default ON for reliability
+st.sidebar.header("⚙️ Controles")
+seed = st.sidebar.number_input("Semilla aleatoria", value=RANDOM_STATE_DEFAULT, step=1)
+sample_n = st.sidebar.slider("Número de filas (para rapidez)", min_value=3000, max_value=100000, value=20000, step=1000)
+thresh = st.sidebar.slider("Umbral acumulado de importancia/varianza", 0.70, 0.99, 0.90, 0.01)
+feat_strategy_es = st.sidebar.selectbox("Estrategia de selección de variables",
+                                     ["Filtrado (ANOVA numérico + Chi² categórica)", "Incrustada (Random Forest)"])
+# Map interno (no romper la lógica aguas abajo)
+feat_strategy = "Filter (ANOVA numeric + Chi² categorical)" if feat_strategy_es.startswith("Filtrado") else "Embedded (Random Forest)"
+pca_enable = st.sidebar.checkbox("Aplicar PCA al bloque numérico", value=True)
+mca_enable = st.sidebar.checkbox("Aplicar MCA al bloque categórico", value=True)
+safe_mode = st.sidebar.toggle("🛟 Modo seguro (omite MCA y búsquedas pesadas)", value=True)  # default ON for reliability
 if safe_mode:
     mca_enable = False
 st.sidebar.divider()
-balancing = st.sidebar.selectbox("Rebalancing",
-                                 ["None", "class_weight=balanced (if supported)", "SMOTE(k=3)", "ADASYN"])
-model_name = st.sidebar.selectbox("Model",
+balancing_es = st.sidebar.selectbox("Rebalanceo",
+                                 ["Ninguno", "class_weight=balanced (si el modelo lo soporta)", "SMOTE(k=3)", "ADASYN"])
+# Map interno
+if balancing_es.startswith("Ninguno"):
+    balancing = "None"
+elif balancing_es.startswith("class_weight=balanced"):
+    balancing = "class_weight=balanced (if supported)"
+else:
+    balancing = balancing_es
+model_name = st.sidebar.selectbox("Modelo",
                                   ["RandomForest", "ExtraTrees", "HistGradientBoosting", "LogisticRegression", "SVM_Linear"])
-param_mode = st.sidebar.radio("Hyperparameter search", ["Fast (quick grids)", "Full (wider grids)"], index=0)
-n_iter = st.sidebar.slider("RandomizedSearch n_iter", 5, 50, 10, 5)
-cv_folds = st.sidebar.slider("CV folds", 3, 10, 3, 1)
-test_size = st.sidebar.slider("Test size", 0.1, 0.4, 0.25, 0.05)
+param_mode_es = st.sidebar.radio("Búsqueda de hiperparámetros", ["Rápida (grillas pequeñas)", "Completa (grillas amplias)"], index=0)
+param_mode = "Fast (quick grids)" if param_mode_es.startswith("Rápida") else "Full (wider grids)"
+n_iter = st.sidebar.slider("n_iter de RandomizedSearch", 5, 50, 10, 5)
+cv_folds = st.sidebar.slider("Pliegues de CV", 3, 10, 3, 1)
+test_size = st.sidebar.slider("Tamaño de prueba", 0.1, 0.4, 0.25, 0.05)
+
+# ---- Comparación de modelos (sidebar) ----
+st.sidebar.divider()
+st.sidebar.subheader("📊 Comparación de modelos")
+compare_toggle = st.sidebar.checkbox("Activar comparación", value=False,
+                                     help="Permite ejecutar varios modelos con la misma preparación de datos y comparar métricas.")
+models_to_compare = []
+compare_clicked = False
+if compare_toggle:
+    all_model_names = list(get_models(seed).keys())
+    models_to_compare = st.sidebar.multiselect("Modelos a comparar", all_model_names, default=all_model_names)
+    compare_clicked = st.sidebar.button("📊 Comparar modelos", type="primary")
+
 SEARCH_N_JOBS = 1 if safe_mode else -1
 
 # Run button
 col_run, col_reset = st.columns([1,1])
-run_clicked = col_run.button("▶️ Run pipeline", type="primary")
-if col_reset.button("♻️ Clear cache"):
+run_clicked = col_run.button("▶️ Ejecutar pipeline", type="primary")
+if col_reset.button("♻️ Limpiar caché"):
     st.cache_data.clear()
     st.rerun()
 
@@ -334,33 +357,33 @@ def apply_balancing_choice(balancing, model, y_train):
 # -------------------------
 if run_clicked:
     try:
-        with st.spinner("Loading dataset..."):
+        with st.spinner("Cargando dataset..."):
             X_raw, y_raw, X_num, X_cat = load_data(seed, sample_n)
     except Exception as e:
-        show_and_stop("Dataset load failed.", e)
+        show_and_stop("Error al cargar el dataset.", e)
 
     # Encode target
     try:
         y_series = y_raw.iloc[:, 0].astype(str)
     except Exception as e:
-        show_and_stop("Could not read target column from dataset.", e)
+        show_and_stop("No se pudo leer la columna objetivo.", e)
 
     le_original = LabelEncoder().fit(y_series)
     y_enc = le_original.transform(y_series)
     class_names = list(le_original.classes_)
 
-    st.subheader("Dataset snapshot")
+    st.subheader("Vista del dataset")
     c1, c2, c3 = st.columns(3)
     c1.metric("Rows", len(X_raw))
     c2.metric("Numeric cols", X_num.shape[1])
     c3.metric("Categorical cols", X_cat.shape[1])
     st.dataframe(pd.concat([X_num.head(3), X_cat.head(3)], axis=1))
-    with st.expander("Class distribution (full sample)"):
+    with st.expander("Distribución de clases (muestra completa)"):
         st.write(pd.Series(y_series).value_counts())
 
     # Preprocess + feature selection
     Xnum_imp, Xcat_imp = prepare_blocks(X_num, X_cat)
-    with st.spinner("Selecting features..."):
+    with st.spinner("Seleccionando variables..."):
         if feat_strategy.startswith("Filter"):
             df_filtrado, details, X_cat_sel_for_mca = filter_selection(Xnum_imp, Xcat_imp, y_enc, thresh)
         else:
@@ -504,18 +527,18 @@ if run_clicked:
         ax_roc.set_title("ROC Curve (binary only)")
         st.pyplot(fig_roc)
     else:
-        st.caption("ROC not shown (multi-class or no predict_proba).")
+        st.caption("ROC no disponible (multiclase o sin predict_proba).")
 
     # Download
     out = pd.DataFrame({"y_true": y_test, "y_pred": y_pred})
     if y_proba is not None:
         out = pd.concat([out.reset_index(drop=True),
                          pd.DataFrame(y_proba, columns=[f"p_{c}" for c in range(y_proba.shape[1])])], axis=1)
-    st.download_button("⬇️ Download test predictions (CSV)",
+    st.download_button("⬇️ Descargar predicciones de prueba (CSV)",
                        data=out.to_csv(index=False).encode("utf-8"),
                        file_name="predictions_test.csv", mime="text/csv")
 
     st.markdown("---")
     st.caption(f"Model: **{model_name}** | Balancing: **{balancing}** | Search: **{param_mode}** | Seed: **{seed}** | Safe Mode: **{safe_mode}**")
 else:
-    st.info("Press **Run pipeline** to execute the workflow. (This keeps the server light and avoids startup crashes.)")
+    st.info("Pulsa **Ejecutar pipeline** para correr el flujo. (Así evitamos cargas pesadas al iniciar).")
