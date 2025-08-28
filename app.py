@@ -7,42 +7,21 @@ Original file is located at
     https://colab.research.google.com/drive/1aOt9CRonp7QMS4ekEucePpOVlGGBWOWL
 """
 
+# -*- coding: utf-8 -*-
+"""
+Diabetes ML Analysis - Fixed Streamlit Application
+"""
+
 import streamlit as st
 import numpy as np
 import pandas as pd
-try:
-    import matplotlib.pyplot as plt
-    MPL_AVAILABLE = True
-except Exception:
-    plt = None
-    MPL_AVAILABLE = False
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
-def _plot_confusion_matrix(cm, labels):
-    """Plot confusion matrix using matplotlib if available, else Plotly heatmap."""
-    if 'MPL_AVAILABLE' in globals() and MPL_AVAILABLE and plt is not None:
-        from sklearn.metrics import ConfusionMatrixDisplay
-        fig, ax = plt.subplots()
-        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=labels)
-        disp.plot(ax=ax, cmap="Blues", colorbar=False)
-        return ("mpl", fig)
-    else:
-        # Plotly fallback
-        fig = go.Figure(data=go.Heatmap(
-            z=cm,
-            x=labels,
-            y=labels,
-            zauto=True,
-            zmin=0
-        ))
-        fig.update_layout(title="Matriz de Confusión", xaxis_title="Predicción", yaxis_title="Real")
-        return ("plotly", fig)
 import time
 from collections import Counter
 
-# Configuración inicial de la página
+# Configure page
 st.set_page_config(
     page_title="Análisis de Diabetes - ML Pipeline",
     page_icon="🩺",
@@ -50,111 +29,103 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Importaciones de ML
+# Import ML libraries with error handling
 @st.cache_resource
 def import_ml_libraries():
-    # UCI Repo (opcional)
+    libraries = {}
+
+    try:
+        from sklearn.preprocessing import StandardScaler, LabelEncoder
+        from sklearn.preprocessing import label_binarize
+        from sklearn.impute import SimpleImputer
+        from sklearn.compose import ColumnTransformer
+        from sklearn.decomposition import PCA
+        from sklearn.feature_selection import chi2, f_classif, SelectKBest, RFECV
+        from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier, HistGradientBoostingClassifier
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.svm import SVC
+        from sklearn.model_selection import train_test_split, RandomizedSearchCV
+        from sklearn.metrics import (
+            classification_report, confusion_matrix, roc_curve, auc,
+            accuracy_score, f1_score
+        )
+        from sklearn.pipeline import Pipeline
+        from scipy.stats import randint, uniform
+
+        libraries.update({
+            'StandardScaler': StandardScaler,
+            'LabelEncoder': LabelEncoder,
+            'label_binarize': label_binarize,
+            'SimpleImputer': SimpleImputer,
+            'ColumnTransformer': ColumnTransformer,
+            'PCA': PCA,
+            'chi2': chi2,
+            'f_classif': f_classif,
+            'SelectKBest': SelectKBest,
+            'RFECV': RFECV,
+            'RandomForestClassifier': RandomForestClassifier,
+            'ExtraTreesClassifier': ExtraTreesClassifier,
+            'HistGradientBoostingClassifier': HistGradientBoostingClassifier,
+            'LogisticRegression': LogisticRegression,
+            'SVC': SVC,
+            'train_test_split': train_test_split,
+            'RandomizedSearchCV': RandomizedSearchCV,
+            'classification_report': classification_report,
+            'confusion_matrix': confusion_matrix,
+            'roc_curve': roc_curve,
+            'auc': auc,
+            'accuracy_score': accuracy_score,
+            'f1_score': f1_score,
+            'Pipeline': Pipeline,
+            'randint': randint,
+            'uniform': uniform,
+            'SKLEARN_AVAILABLE': True
+        })
+    except ImportError as e:
+        libraries['SKLEARN_AVAILABLE'] = False
+        libraries['error'] = str(e)
+
+    # Try to import UCI repo
     try:
         from ucimlrepo import fetch_ucirepo
-        UCI_AVAILABLE = True
+        libraries['fetch_ucirepo'] = fetch_ucirepo
+        libraries['UCI_AVAILABLE'] = True
     except ImportError:
-        fetch_ucirepo = None
-        UCI_AVAILABLE = False
+        libraries['UCI_AVAILABLE'] = False
+        libraries['fetch_ucirepo'] = None
 
-    # Preprocesamiento
-    from sklearn.preprocessing import StandardScaler, LabelEncoder
-    from sklearn.impute import SimpleImputer
-    from sklearn.compose import ColumnTransformer
-
-    # Reducción de dimensionalidad
-    from sklearn.decomposition import PCA
-
-    # Selección de características
-    from sklearn.feature_selection import chi2, f_classif, SelectKBest, RFECV
-
-    # Modelos de clasificación
-    from sklearn.ensemble import (
-        RandomForestClassifier, ExtraTreesClassifier, HistGradientBoostingClassifier
-    )
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.svm import SVC
-
-    # Validación y optimización
-    from sklearn.model_selection import train_test_split, RandomizedSearchCV
-
-    # Métricas
-    from sklearn.metrics import (
-        classification_report, confusion_matrix, ConfusionMatrixDisplay,
-        roc_curve, auc, RocCurveDisplay, accuracy_score, f1_score
-    )
-
-    # Pipelines
-    from sklearn.pipeline import Pipeline
+    # Try to import imbalanced-learn
     try:
-        from imblearn.pipeline import Pipeline as ImbPipeline
         from imblearn.over_sampling import ADASYN, SMOTE
-        from sklearn.utils.class_weight import compute_class_weight
-        IMBALANCED_AVAILABLE = True
+        libraries['ADASYN'] = ADASYN
+        libraries['SMOTE'] = SMOTE
+        libraries['IMBALANCED_AVAILABLE'] = True
     except ImportError:
-        IMBALANCED_AVAILABLE = False
+        libraries['IMBALANCED_AVAILABLE'] = False
 
-    # Estadística
-    from scipy.stats import spearmanr, randint, uniform
+    return libraries
 
-    return {
-        'fetch_ucirepo': fetch_ucirepo,
-        'StandardScaler': StandardScaler,
-        'LabelEncoder': LabelEncoder,
-        'SimpleImputer': SimpleImputer,
-        'ColumnTransformer': ColumnTransformer,
-        'PCA': PCA,
-        'chi2': chi2,
-        'f_classif': f_classif,
-        'SelectKBest': SelectKBest,
-        'RFECV': RFECV,
-        'RandomForestClassifier': RandomForestClassifier,
-        'ExtraTreesClassifier': ExtraTreesClassifier,
-        'HistGradientBoostingClassifier': HistGradientBoostingClassifier,
-        'LogisticRegression': LogisticRegression,
-        'SVC': SVC,
-        'train_test_split': train_test_split,
-        'RandomizedSearchCV': RandomizedSearchCV,
-        'classification_report': classification_report,
-        'confusion_matrix': confusion_matrix,
-        'ConfusionMatrixDisplay': ConfusionMatrixDisplay,
-        'roc_curve': roc_curve,
-        'auc': auc,
-        'accuracy_score': accuracy_score,
-        'f1_score': f1_score,
-        'Pipeline': Pipeline,
-        'randint': randint,
-        'uniform': uniform,
-        'UCI_AVAILABLE': UCI_AVAILABLE,
-        'fetch_ucirepo': fetch_ucirepo,
-        'IMBALANCED_AVAILABLE': IMBALANCED_AVAILABLE
-    }
-
-
-# ==== Lazy loader for ML libs (prevents crash on missing deps) ====
 def get_ml_libs():
-    """Carga perezosa de librerías de ML. Si falla, muestra un mensaje y retorna None."""
+    """Lazy loading of ML libraries with error handling"""
     if 'ml_libs' in st.session_state:
         return st.session_state['ml_libs']
+
     try:
         libs = import_ml_libraries()
+        if not libs.get('SKLEARN_AVAILABLE', False):
+            st.error("⚠️ Scikit-learn no está disponible. Instala las dependencias necesarias.")
+            return None
         st.session_state['ml_libs'] = libs
         return libs
     except Exception as e:
-        st.session_state['ml_libs_error'] = str(e)
+        st.error(f"Error cargando librerías ML: {str(e)}")
         return None
 
-# Cargar librerías
-# (lazy) ml_libs will be loaded via get_ml_libs()
-# Configuración global
+# Global configuration
 RANDOM_STATE = 42
 np.random.seed(RANDOM_STATE)
 
-# CSS personalizado
+# Custom CSS
 st.markdown("""
 <style>
     .metric-card {
@@ -184,195 +155,196 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def main():
-    st.set_page_config(page_title='Diabetes ML', layout='wide', initial_sidebar_state='expanded')
-    st.title('🩺 Diabetes ML — Panel')
-    st.title("🩺 Análisis de Diabetes - Pipeline de Machine Learning")
-    st.markdown("---")
+def plot_confusion_matrix(cm, labels):
+    """Plot confusion matrix using Plotly"""
+    fig = go.Figure(data=go.Heatmap(
+        z=cm,
+        x=labels,
+        y=labels,
+        colorscale='Blues',
+        showscale=True,
+        text=cm,
+        texttemplate="%{text}",
+        textfont={"size": 16}
+    ))
 
-    # Sidebar para navegación
-    st.sidebar.title("🔧 Panel de Control")
-
-    # Sección principal
-    page = st.sidebar.selectbox(
-        "Selecciona una sección:",
-        [
-            "📊 Carga y Exploración de Datos",
-            "🔧 Preprocesamiento",
-            "📉 Selección de Características",
-            "🤖 Modelado Individual",
-            "🏆 Comparación de Modelos",
-            "📈 Resultados y Visualizaciones"
-        ]
+    fig.update_layout(
+        title="Matriz de Confusión",
+        xaxis_title="Predicción",
+        yaxis_title="Real",
+        width=500,
+        height=500
     )
 
-    if page == "📊 Carga y Exploración de Datos":
-        seccion_carga_datos()
-    elif page == "🔧 Preprocesamiento":
-        seccion_preprocesamiento()
-    elif page == "📉 Selección de Características":
-        seccion_seleccion_caracteristicas()
-    elif page == "🤖 Modelado Individual":
-        seccion_modelado_individual()
-    elif page == "🏆 Comparación de Modelos":
-        seccion_comparacion_modelos()
-    elif page == "📈 Resultados y Visualizaciones":
-        seccion_resultados()
+    return fig
 
 @st.cache_data
-def cargar_datos_diabetes():
-    """Carga los datos del dataset de diabetes"""
-    if not ml_libs.get('UCI_AVAILABLE', False) or ml_libs.get('fetch_ucirepo') is None:
+def load_diabetes_data():
+    """Load diabetes dataset"""
+    ml_libs = get_ml_libs()
+    if not ml_libs or not ml_libs.get('UCI_AVAILABLE', False):
         return None, None
+
     try:
-        ds = ml_libs['fetch_ucirepo'](id=296)
-        X_raw = ds.data.features.copy()
-        y_raw = ds.data.targets.copy()
+        dataset = ml_libs['fetch_ucirepo'](id=296)
+        X_raw = dataset.data.features.copy()
+        y_raw = dataset.data.targets.copy()
 
-        # Muestra aleatoria
-        sample_indices = np.random.choice(X_raw.index, size=20000, replace=False)
-        X_raw_sample = X_raw.loc[sample_indices].copy()
-        y_raw_sample = y_raw.loc[sample_indices].copy()
+        # Random sample for demo
+        if len(X_raw) > 20000:
+            sample_indices = np.random.choice(X_raw.index, size=20000, replace=False)
+            X_raw = X_raw.loc[sample_indices].copy()
+            y_raw = y_raw.loc[sample_indices].copy()
 
-        return X_raw_sample, y_raw_sample
+        return X_raw, y_raw
     except Exception as e:
-        st.error(f"Error al cargar los datos: {str(e)}")
+        st.error(f"Error loading UCI data: {str(e)}")
         return None, None
 
-def seccion_carga_datos():
+def section_data_loading():
+    """Data loading and exploration section"""
+    st.header("📊 Carga y Exploración de Datos")
+
     ml_libs = get_ml_libs()
     if ml_libs is None:
-        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
-        if 'ml_libs_error' in st.session_state:
-            st.code(st.session_state['ml_libs_error'])
+        st.error("No se pudieron cargar las librerías de ML. Instala scikit-learn y dependencias.")
         return
-    st.header("📊 Carga y Exploración de Datos")
 
     col1, col2 = st.columns([2, 1])
 
     with col1:
         st.subheader("Obtener datos")
-        uci_disabled = not ml_libs.get('UCI_AVAILABLE', False) or ml_libs.get('fetch_ucirepo') is None
+
+        # UCI Dataset option
+        uci_disabled = not ml_libs.get('UCI_AVAILABLE', False)
         if uci_disabled:
-            st.info("ℹ️ El dataset UCI no está disponible en este entorno. Usa la **carga de CSV**.")
-        if st.button("🔄 Cargar Diabetes desde UCI", type="primary", disabled=uci_disabled):
+            st.info("ℹ️ El dataset UCI no está disponible. Usa la carga de CSV.")
+
+        if st.button("📄 Cargar Diabetes desde UCI", type="primary", disabled=uci_disabled):
             with st.spinner("Cargando datos desde UCI..."):
-                X_raw, y_raw = cargar_datos_diabetes()
+                X_raw, y_raw = load_diabetes_data()
                 if X_raw is not None and y_raw is not None:
                     st.session_state['X_raw'] = X_raw
                     st.session_state['y_raw'] = y_raw
                     st.success("✅ Datos UCI cargados correctamente.")
                 else:
-                    st.error("No fue posible cargar el dataset desde UCI. Usa la carga de CSV.")
+                    st.error("Error cargando datos UCI. Usa la opción de CSV.")
 
         st.markdown("---")
-        st.subheader("Subir archivo CSV propio")
-        up = st.file_uploader("Carga un CSV con tus datos (incluye la columna objetivo)", type=["csv"])
-        if up is not None:
+        st.subheader("Subir archivo CSV")
+        uploaded_file = st.file_uploader("Carga un CSV", type=["csv"])
+
+        if uploaded_file is not None:
             try:
-                df = pd.read_csv(up)
+                df = pd.read_csv(uploaded_file)
                 if df.empty:
                     st.error("El archivo está vacío.")
                 else:
                     st.dataframe(df.head())
-                    target_col = st.selectbox("Selecciona la columna objetivo (y)", options=df.columns, index=len(df.columns)-1)
-                    if target_col:
+                    target_col = st.selectbox(
+                        "Selecciona la columna objetivo:",
+                        options=df.columns.tolist(),
+                        index=len(df.columns)-1
+                    )
+
+                    if st.button("Usar este dataset"):
                         X_raw = df.drop(columns=[target_col]).copy()
                         y_raw = df[[target_col]].copy()
                         st.session_state['X_raw'] = X_raw
                         st.session_state['y_raw'] = y_raw
-                        st.success("✅ Datos del CSV cargados en la aplicación.")
+                        st.success("✅ Datos del CSV cargados.")
             except Exception as e:
-                st.error(f"Error leyendo el CSV: {e}")
+                st.error(f"Error leyendo CSV: {e}")
 
     with col2:
         st.subheader("ℹ️ Instrucciones")
-        st.markdown(
-            """
-            - Puedes cargar el **dataset de diabetes de UCI** (si está disponible) o **subir tu propio CSV**.
-            - La columna objetivo debe ser una sola columna (binaria o multi-clase).
-            - Tras cargar datos, revisa la exploración y continúa con **Preprocesamiento**.
-            """
-        )
+        st.markdown("""
+        - Carga el dataset de diabetes UCI o sube tu CSV
+        - La columna objetivo debe ser categórica
+        - Continúa con Preprocesamiento tras cargar datos
+        """)
 
-    # Mostrar exploración si hay datos en sesión
+    # Show data exploration if data is loaded
     if 'X_raw' in st.session_state and 'y_raw' in st.session_state:
-        X_raw = st.session_state['X_raw']
-        y_raw = st.session_state['y_raw']
+        show_data_exploration()
 
-        st.subheader("Exploración rápida")
+def show_data_exploration():
+    """Show data exploration"""
+    X_raw = st.session_state['X_raw']
+    y_raw = st.session_state['y_raw']
 
-        tab1, tab2, tab3, tab4 = st.tabs(["📋 Vista General", "🔢 Tipos de Datos", "🎯 Variable Objetivo", "📊 Valores Faltantes"])
+    st.subheader("Exploración rápida")
 
-        with tab1:
-            st.subheader("Primeras filas del dataset")
-            st.dataframe(X_raw.head(10))
-            st.subheader("Estadísticas descriptivas")
-            st.dataframe(X_raw.describe())
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📋 Vista General", "🔢 Tipos de Datos",
+        "🎯 Variable Objetivo", "📊 Valores Faltantes"
+    ])
 
-        with tab2:
-            col1, col2 = st.columns(2)
-            with col1:
-                numeric_cols = X_raw.select_dtypes(include=[np.number]).columns.tolist()
-                st.markdown(
-                    f"""
-                    <div class="success-card">
-                        <h4>🔢 Variables Numéricas ({len(numeric_cols)})</h4>
-                        <p>{', '.join(numeric_cols[:5])}{'...' if len(numeric_cols) > 5 else ''}</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-            with col2:
-                cat_cols = X_raw.select_dtypes(include=['object', 'category']).columns.tolist()
-                st.markdown(
-                    f"""
-                    <div class="info-card">
-                        <h4>📝 Variables Categóricas ({len(cat_cols)})</h4>
-                        <p>{', '.join(cat_cols[:5])}{'...' if len(cat_cols) > 5 else ''}</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+    with tab1:
+        st.subheader("Primeras filas")
+        st.dataframe(X_raw.head(10))
+        st.subheader("Estadísticas descriptivas")
+        st.dataframe(X_raw.describe())
 
-        with tab3:
-            st.subheader("Variable objetivo")
-            y_counts = st.session_state['y_raw'].iloc[:, 0].astype(str).value_counts()
-            col1, col2 = st.columns(2)
-            with col1:
-                fig = px.pie(
-                    values=y_counts.values,
-                    names=y_counts.index,
-                    title="Distribución de Clases"
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            with col2:
-                freq_table = pd.DataFrame({
-                    'Clase': y_counts.index,
-                    'Cantidad': y_counts.values,
-                    'Porcentaje': (y_counts.values / y_counts.sum() * 100).round(2)
-                })
-                st.dataframe(freq_table)
+    with tab2:
+        col1, col2 = st.columns(2)
 
-        with tab4:
-            st.subheader("Valores faltantes por columna")
-            na_counts = X_raw.isna().sum().sort_values(ascending=False)
-            st.dataframe(na_counts[na_counts > 0])
-    else:
-        st.warning("Carga datos desde UCI (si disponible) o sube un CSV para continuar.")
+        with col1:
+            numeric_cols = X_raw.select_dtypes(include=[np.number]).columns.tolist()
+            st.markdown(f"""
+            <div class="success-card">
+                <h4>🔢 Variables Numéricas ({len(numeric_cols)})</h4>
+                <p>{', '.join(numeric_cols[:5])}{'...' if len(numeric_cols) > 5 else ''}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
+        with col2:
+            cat_cols = X_raw.select_dtypes(include=['object', 'category']).columns.tolist()
+            st.markdown(f"""
+            <div class="metric-card">
+                <h4>📝 Variables Categóricas ({len(cat_cols)})</h4>
+                <p>{', '.join(cat_cols[:5])}{'...' if len(cat_cols) > 5 else ''}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
-def seccion_preprocesamiento():
-    ml_libs = get_ml_libs()
-    if ml_libs is None:
-        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
-        if 'ml_libs_error' in st.session_state:
-            st.code(st.session_state['ml_libs_error'])
-        return
+    with tab3:
+        y_counts = y_raw.iloc[:, 0].astype(str).value_counts()
+        col1, col2 = st.columns(2)
+
+        with col1:
+            fig = px.pie(
+                values=y_counts.values,
+                names=y_counts.index,
+                title="Distribución de Clases"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            freq_df = pd.DataFrame({
+                'Clase': y_counts.index,
+                'Cantidad': y_counts.values,
+                'Porcentaje': (y_counts.values / y_counts.sum() * 100).round(2)
+            })
+            st.dataframe(freq_df)
+
+    with tab4:
+        missing_counts = X_raw.isna().sum().sort_values(ascending=False)
+        missing_data = missing_counts[missing_counts > 0]
+        if len(missing_data) > 0:
+            st.dataframe(missing_data)
+        else:
+            st.success("✅ No hay valores faltantes")
+
+def section_preprocessing():
+    """Data preprocessing section"""
     st.header("🔧 Preprocesamiento de Datos")
 
+    ml_libs = get_ml_libs()
+    if ml_libs is None:
+        return
+
     if 'X_raw' not in st.session_state:
-        st.warning("⚠️ Primero debes cargar los datos en la sección anterior.")
+        st.warning("⚠️ Primero carga los datos.")
         return
 
     X_raw = st.session_state['X_raw']
@@ -383,95 +355,415 @@ def seccion_preprocesamiento():
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("### 🎛️ Parámetros")
-        thresh = st.slider("Umbral de varianza explicada (%)", 50, 99, 90) / 100
+        # Variables to remove
+        id_like_cols = [col for col in X_raw.columns
+                       if any(keyword in col.lower()
+                             for keyword in ['id', 'encounter', 'patient', 'diag_', 'payer', 'specialty'])]
 
-        # Selección de variables a eliminar
-        id_like_default = ["encounter_id", "patient_nbr", "encounterid", "patientnbr",
-                          "diag_1", "diag_2", "diag_3", "payer_code", "medical_specialty"]
-
-        variables_eliminar = st.multiselect(
-            "Variables a eliminar (IDs y diagnósticos específicos):",
+        vars_to_remove = st.multiselect(
+            "Variables a eliminar:",
             options=X_raw.columns.tolist(),
-            default=[col for col in id_like_default if col in X_raw.columns]
+            default=id_like_cols
         )
 
+        # Missing value threshold
+        missing_threshold = st.slider("Umbral de valores faltantes (%)", 0, 50, 20) / 100
+
     with col2:
-        st.markdown("### ⚙️ Parámetros del Modelo")
+        # PCA threshold (se usará en la sección PCA)
+        pca_threshold = st.slider("Varianza explicada PCA (%)", 80, 99, 95) / 100
+        st.session_state['pca_threshold'] = pca_threshold
 
-        # Configuración específica del modelo
-        if modelo_seleccionado == "Random Forest":
-            n_estimators = st.slider("Número de árboles", 50, 500, 100)
-            max_depth = st.selectbox("Profundidad máxima", [None, 10, 20, 30, 50])
-        elif modelo_seleccionado == "Extra Trees":
-            n_estimators = st.slider("Número de árboles", 50, 500, 100)
-            max_depth = st.selectbox("Profundidad máxima", [None, 10, 20, 30, 50])
-        elif modelo_seleccionado == "Gradient Boosting":
-            max_iter = st.slider("Máximo de iteraciones", 50, 300, 100)
-            learning_rate = st.slider("Tasa de aprendizaje", 0.01, 0.3, 0.1)
-        elif modelo_seleccionado == "Regresión Logística":
-            C = st.slider("Parámetro C", 0.01, 10.0, 1.0)
-            max_iter = st.slider("Máximo de iteraciones", 500, 3000, 1000)
-        elif modelo_seleccionado == "SVM Lineal":
-            C = st.slider("Parámetro C", 0.01, 10.0, 1.0)
-            max_iter = st.slider("Máximo de iteraciones", 500, 3000, 1000)
+        # Show preprocessing steps
+        st.markdown("""
+        **Pasos del preprocesamiento:**
+        1. Eliminar variables seleccionadas
+        2. Eliminar variables con muchos faltantes
+        3. Imputar valores faltantes
+        4. Codificar variables categóricas
+        5. Escalar variables numéricas
+        6. Codificar variable objetivo
+        """)
 
-    # Configuración de balanceo de clases
-    st.subheader("Manejo de Desbalance de Clases")
+    if st.button("🚀 Ejecutar Preprocesamiento", type="primary"):
+        with st.spinner("Ejecutando preprocesamiento..."):
+            # Step 1: Remove selected variables
+            X_clean = X_raw.drop(columns=vars_to_remove, errors='ignore')
 
-    class_counts = Counter(y_encoded)
-    total_samples = len(y_encoded)
+            # Step 2: Remove variables with too many missing values
+            missing_prop = X_clean.isna().mean()
+            cols_to_keep = missing_prop[missing_prop <= missing_threshold].index
+            X_clean = X_clean[cols_to_keep]
+
+            # Step 3: Separate numeric and categorical
+            numeric_cols = X_clean.select_dtypes(include=[np.number]).columns.tolist()
+            categorical_cols = X_clean.select_dtypes(include=['object', 'category']).columns.tolist()
+
+            # Step 4: Handle missing values
+            if len(numeric_cols) > 0:
+                imputer_num = ml_libs['SimpleImputer'](strategy='median')
+                X_num = pd.DataFrame(
+                    imputer_num.fit_transform(X_clean[numeric_cols]),
+                    columns=numeric_cols,
+                    index=X_clean.index
+                )
+            else:
+                X_num = pd.DataFrame(index=X_clean.index)
+
+            if len(categorical_cols) > 0:
+                imputer_cat = ml_libs['SimpleImputer'](strategy='most_frequent')
+                X_cat = pd.DataFrame(
+                    imputer_cat.fit_transform(X_clean[categorical_cols]),
+                    columns=categorical_cols,
+                    index=X_clean.index
+                )
+
+                # One-hot encoding for categorical variables
+                X_cat_dummies = pd.get_dummies(X_cat, prefix_sep='=', drop_first=True)
+            else:
+                X_cat = pd.DataFrame(index=X_clean.index)
+                X_cat_dummies = pd.DataFrame(index=X_clean.index)
+
+            # Step 5: Scale numeric variables
+            if len(numeric_cols) > 0:
+                scaler = ml_libs['StandardScaler']()
+                X_num_scaled = pd.DataFrame(
+                    scaler.fit_transform(X_num),
+                    columns=numeric_cols,
+                    index=X_num.index
+                )
+            else:
+                X_num_scaled = pd.DataFrame(index=X_clean.index)
+                scaler = None
+
+            # Step 6: Encode target variable
+            label_encoder = ml_libs['LabelEncoder']()
+            y_encoded = label_encoder.fit_transform(y_raw.iloc[:, 0])
+
+            # Combine features for later PCA / modeling convenience
+            X_all = pd.concat([X_num_scaled, X_cat_dummies.fillna(0)], axis=1)
+
+            # Save processed data
+            st.session_state.update({
+                'X_num_scaled': X_num_scaled,
+                'X_cat_processed': X_cat,
+                'X_cat_dummies': X_cat_dummies,
+                'X_all': X_all,
+                'y_encoded': y_encoded,
+                'label_encoder': label_encoder,
+                'scaler': scaler,
+                'numeric_cols': numeric_cols,
+                'categorical_cols': categorical_cols
+            })
+
+        st.success("✅ Preprocesamiento completado!")
+
+        # Show results
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("Variables Numéricas", len(numeric_cols))
+
+        with col2:
+            st.metric("Variables Categóricas", len(categorical_cols))
+
+        with col3:
+            st.metric("Variables Finales", X_num_scaled.shape[1] + X_cat_dummies.shape[1])
+
+        with col4:
+            st.metric("Muestras", len(X_clean))
+
+        # Show class distribution
+        st.subheader("Distribución de clases procesadas")
+        class_counts = pd.Series(y_encoded).map(
+            lambda x: label_encoder.classes_[x]
+        ).value_counts()
+
+        fig = px.bar(
+            x=class_counts.index,
+            y=class_counts.values,
+            title="Distribución de Clases"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+def section_pca_exploratory():
+    """Exploratory PCA on processed features"""
+    st.header("🧭 Exploración Dimensional (PCA)")
+    ml_libs = get_ml_libs()
+    if ml_libs is None:
+        return
+
+    if not all(k in st.session_state for k in ['X_all', 'y_encoded', 'label_encoder']):
+        st.warning("⚠️ Primero ejecuta el preprocesamiento.")
+        return
+
+    X_all = st.session_state['X_all']
+    y_encoded = st.session_state['y_encoded']
+    label_encoder = st.session_state['label_encoder']
+    pca_threshold = st.session_state.get('pca_threshold', 0.95)
+
+    max_components = int(min(50, max(2, X_all.shape[1])))
+    pca = ml_libs['PCA'](n_components=max_components, random_state=RANDOM_STATE)
+    pcs = pca.fit_transform(X_all)
+    explained = np.cumsum(pca.explained_variance_ratio_)
+    k = int(np.argmax(explained >= pca_threshold) + 1) if any(explained >= pca_threshold) else max_components
+
+    st.markdown(f"**Componentes para alcanzar {int(pca_threshold*100)}% de varianza:** {k}")
+
+    # Varianza acumulada
+    fig_var = go.Figure()
+    fig_var.add_trace(go.Scatter(y=explained, mode='lines+markers', name='Varianza acumulada'))
+    fig_var.add_hline(y=pca_threshold, line_dash="dash", annotation_text=f"Umbral {int(pca_threshold*100)}%")
+    fig_var.update_layout(title="Varianza Acumulada (PCA)", xaxis_title="Componentes", yaxis_title="Proporción")
+    st.plotly_chart(fig_var, use_container_width=True)
+
+    # PC1 vs PC2
+    df_pca = pd.DataFrame({
+        'PC1': pcs[:, 0],
+        'PC2': pcs[:, 1],
+        'Clase': label_encoder.inverse_transform(y_encoded)
+    })
+    fig_scatter = px.scatter(df_pca, x='PC1', y='PC2', color='Clase', title="PC1 vs PC2")
+    st.plotly_chart(fig_scatter, use_container_width=True)
+
+def section_feature_selection():
+    """Feature selection section"""
+    st.header("📉 Selección de Características")
+
+    ml_libs = get_ml_libs()
+    if ml_libs is None:
+        return
+
+    required_keys = ['X_num_scaled', 'X_cat_dummies', 'y_encoded', 'label_encoder']
+    if not all(key in st.session_state for key in required_keys):
+        st.warning("⚠️ Primero ejecuta el preprocesamiento.")
+        return
+
+    X_num_scaled = st.session_state['X_num_scaled']
+    X_cat_dummies = st.session_state['X_cat_dummies']
+    y_encoded = st.session_state['y_encoded']
+
+    st.subheader("Métodos de Selección")
+
+    methods = st.multiselect(
+        "Selecciona métodos:",
+        ["Chi-cuadrado (Categóricas)", "ANOVA F (Numéricas)", "Random Forest (Embedded)"],
+        default=["Random Forest (Embedded)"]
+    )
+
+    # Feature selection parameters
+    col1, col2 = st.columns(2)
+    with col1:
+        k_best_num = st.slider("Número de mejores características numéricas", 5, 50, 10)
+    with col2:
+        k_best_cat = st.slider("Número de mejores características categóricas", 5, 50, 10)
+
+    if st.button("🔍 Ejecutar Selección", type="primary"):
+        results = {}
+
+        with st.spinner("Seleccionando características..."):
+
+            # Method 1: Chi-squared for categorical
+            if "Chi-cuadrado (Categóricas)" in methods and X_cat_dummies.shape[1] > 0:
+                selector_chi2 = ml_libs['SelectKBest'](ml_libs['chi2'], k=min(k_best_cat, X_cat_dummies.shape[1]))
+                X_cat_selected = selector_chi2.fit_transform(X_cat_dummies.fillna(0), y_encoded)
+                selected_cat_features = X_cat_dummies.columns[selector_chi2.get_support()].tolist()
+
+                results['chi2'] = {
+                    'method': 'Chi-cuadrado',
+                    'selected_vars': selected_cat_features,
+                    'scores': pd.Series(selector_chi2.scores_, index=X_cat_dummies.columns).sort_values(ascending=False)
+                }
+
+            # Method 2: ANOVA F for numerical
+            if "ANOVA F (Numéricas)" in methods and X_num_scaled.shape[1] > 0:
+                selector_anova = ml_libs['SelectKBest'](ml_libs['f_classif'], k=min(k_best_num, X_num_scaled.shape[1]))
+                X_num_selected = selector_anova.fit_transform(X_num_scaled, y_encoded)
+                selected_num_features = X_num_scaled.columns[selector_anova.get_support()].tolist()
+
+                results['anova'] = {
+                    'method': 'ANOVA F',
+                    'selected_vars': selected_num_features,
+                    'scores': pd.Series(selector_anova.scores_, index=X_num_scaled.columns).sort_values(ascending=False)
+                }
+
+            # Method 3: Random Forest feature importance
+            if "Random Forest (Embedded)" in methods:
+                X_combined = pd.concat([X_num_scaled, X_cat_dummies.fillna(0)], axis=1)
+
+                rf = ml_libs['RandomForestClassifier'](n_estimators=200, random_state=RANDOM_STATE, n_jobs=-1)
+                rf.fit(X_combined, y_encoded)
+
+                feature_importance = pd.Series(rf.feature_importances_, index=X_combined.columns)
+                top_k = min(20, len(feature_importance))
+                selected_rf_features = feature_importance.nlargest(top_k).index.tolist()
+
+                results['random_forest'] = {
+                    'method': 'Random Forest',
+                    'selected_vars': selected_rf_features,
+                    'scores': feature_importance.sort_values(ascending=False)
+                }
+
+        st.session_state['feature_selection_results'] = results
+        st.success("✅ Selección de características completada!")
+
+        # Show results
+        for method_key, result in results.items():
+            st.subheader(f"Resultados - {result['method']}")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                top_features = result['scores'].head(10)
+                fig = px.bar(
+                    x=top_features.values,
+                    y=top_features.index,
+                    orientation='h',
+                    title=f"Top 10 - {result['method']}"
+                )
+                fig.update_layout(yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col2:
+                st.markdown(f"""
+                <div class="success-card">
+                    <h4>📊 Resumen</h4>
+                    <p><strong>Variables seleccionadas:</strong> {len(result['selected_vars'])}</p>
+                    <p><strong>Método:</strong> {result['method']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Show selected features
+                st.write("**Variables seleccionadas:**")
+                for i, var in enumerate(result['selected_vars'][:10], 1):
+                    st.write(f"{i}. {var}")
+                if len(result['selected_vars']) > 10:
+                    st.write(f"... y {len(result['selected_vars']) - 10} más")
+
+def _plot_roc_generic(y_test, y_proba, label_encoder, ml_libs):
+    """Devuelve figura ROC y AUC (binaria o multiclase)"""
+    n_classes = len(label_encoder.classes_)
+    fig = go.Figure()
+    roc_auc_display = None
+
+    if y_proba is None:
+        return None, None
+
+    if n_classes == 2:
+        fpr, tpr, _ = ml_libs['roc_curve'](y_test, y_proba[:, 1])
+        roc_auc = ml_libs['auc'](fpr, tpr)
+        fig.add_trace(go.Scatter(x=fpr, y=tpr, mode='lines', name=f'ROC (AUC={roc_auc:.3f})'))
+        fig.add_trace(go.Scatter(x=[0,1], y=[0,1], mode='lines', name='Azar', line=dict(dash='dash')))
+        fig.update_layout(title="Curva ROC (binaria)", xaxis_title="FPR", yaxis_title="TPR")
+        roc_auc_display = roc_auc
+    else:
+        # One-vs-rest
+        Y_bin = ml_libs['label_binarize'](y_test, classes=np.arange(n_classes))
+        aucs = []
+        max_curves = min(n_classes, 5)  # limitar curvas en la gráfica
+        for i in range(n_classes):
+            fpr, tpr, _ = ml_libs['roc_curve'](Y_bin[:, i], y_proba[:, i])
+            roc_auc = ml_libs['auc'](fpr, tpr)
+            aucs.append(roc_auc)
+            if i < max_curves:
+                fig.add_trace(go.Scatter(x=fpr, y=tpr, mode='lines', name=f'Clase {label_encoder.classes_[i]} (AUC={roc_auc:.3f})'))
+        macro_auc = float(np.mean(aucs))
+        fig.add_trace(go.Scatter(x=[0,1], y=[0,1], mode='lines', name='Azar', line=dict(dash='dash')))
+        fig.update_layout(title=f"Curvas ROC (multiclase) • Macro-AUC={macro_auc:.3f}", xaxis_title="FPR", yaxis_title="TPR")
+        roc_auc_display = macro_auc
+
+    return fig, roc_auc_display
+
+def _show_feature_importance(model, feature_names):
+    """Grafica importancia si el modelo la expone"""
+    if hasattr(model, "feature_importances_"):
+        imp = pd.Series(model.feature_importances_, index=feature_names).sort_values(ascending=False).head(20)
+        fig = px.bar(x=imp.values, y=imp.index, orientation='h', title="Importancia de características (Top 20)")
+        fig.update_layout(yaxis={'categoryorder':'total ascending'})
+        st.plotly_chart(fig, use_container_width=True)
+    elif hasattr(model, "coef_"):
+        try:
+            coef = model.coef_
+            if coef.ndim == 1:
+                s = pd.Series(coef, index=feature_names).abs().sort_values(ascending=False).head(20)
+            else:
+                s = pd.Series(np.mean(np.abs(coef), axis=0), index=feature_names).sort_values(ascending=False).head(20)
+            fig = px.bar(x=s.values, y=s.index, orientation='h', title="Coeficientes (magnitud, Top 20)")
+            fig.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception:
+            st.info("ℹ️ Este modelo no expone importancia de variables de forma directa.")
+
+def section_individual_modeling():
+    """Individual model training section"""
+    st.header("🤖 Modelado Individual")
+
+    ml_libs = get_ml_libs()
+    if ml_libs is None:
+        return
+
+    # Check dependencies
+    required_keys = ['X_num_scaled', 'X_cat_dummies', 'y_encoded', 'label_encoder']
+    if not all(key in st.session_state for key in required_keys):
+        st.warning("⚠️ Primero ejecuta preprocesamiento.")
+        return
+
+    if 'feature_selection_results' not in st.session_state:
+        st.warning("⚠️ Primero ejecuta selección de características.")
+        return
+
+    X_num_scaled = st.session_state['X_num_scaled']
+    X_cat_dummies = st.session_state['X_cat_dummies']
+    y_encoded = st.session_state['y_encoded']
+    label_encoder = st.session_state['label_encoder']
+
+    st.subheader("Configuración del Modelo")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        # Mostrar distribución actual
-        st.markdown("#### Distribución Actual")
-        for class_label, count in sorted(class_counts.items()):
-            percentage = (count / total_samples) * 100
-            st.write(f"Clase {label_encoder.classes_[class_label]}: {count} ({percentage:.1f}%)")
-
-        # Calcular ratio de desbalance
-        min_class = min(class_counts.values())
-        max_class = max(class_counts.values())
-        imbalance_ratio = max_class / min_class
-
-        if imbalance_ratio > 2:
-            st.warning(f"⚠️ Ratio de desbalance: {imbalance_ratio:.2f}:1")
-        else:
-            st.success(f"✅ Ratio de desbalance: {imbalance_ratio:.2f}:1")
-
-    with col2:
-        balancing_method = st.selectbox(
-            "Método de balanceo:",
-            ["Ninguno", "Class Weight Balanced", "SMOTE", "ADASYN"]
+        # Feature selection method
+        feature_method = st.selectbox(
+            "Método de selección de características:",
+            list(st.session_state['feature_selection_results'].keys())
         )
 
-        if balancing_method != "Ninguno":
-            st.info(f"Se aplicará {balancing_method} para balancear las clases")
+        # Model selection
+        models_available = {
+            "Random Forest": ml_libs['RandomForestClassifier'](random_state=RANDOM_STATE, n_jobs=-1),
+            "Extra Trees": ml_libs['ExtraTreesClassifier'](random_state=RANDOM_STATE, n_jobs=-1),
+            "Gradient Boosting": ml_libs['HistGradientBoostingClassifier'](random_state=RANDOM_STATE),
+            "Logistic Regression": ml_libs['LogisticRegression'](random_state=RANDOM_STATE, max_iter=2000, n_jobs=-1),
+            "SVM Linear": ml_libs['SVC'](kernel='linear', random_state=RANDOM_STATE, probability=True, max_iter=5000)
+        }
+
+        selected_model = st.selectbox("Modelo:", list(models_available.keys()))
+
+    with col2:
+        # Training parameters
+        test_size = st.slider("Tamaño del conjunto de prueba (%)", 10, 40, 25) / 100
+
+        # Class balancing
+        balancing_method = st.selectbox(
+            "Método de balanceo:",
+            ["Ninguno", "Class Weight Balanced", "SMOTE"]
+        )
 
     if st.button("🚀 Entrenar Modelo", type="primary"):
-        with st.spinner(f"Entrenando {modelo_seleccionado}..."):
-            # Preparar datos
-            feature_results = st.session_state['feature_selection_results'][metodo_caracteristicas]
-            selected_vars = feature_results['selected_vars']
+        with st.spinner(f"Entrenando {selected_model}..."):
+            # Prepare data
+            selected_features = st.session_state['feature_selection_results'][feature_method]['selected_vars']
 
-            # Preparar dataset final
-            if metodo_caracteristicas == 'chi2':
-                # Solo variables categóricas seleccionadas
-                X_cat_sel = st.session_state['X_cat_processed'][selected_vars]
-                X_cat_sel_dum = pd.get_dummies(X_cat_sel, drop_first=True, prefix_sep='=')
-                X_final = pd.concat([X_num_scaled, X_cat_sel_dum], axis=1)
-            elif metodo_caracteristicas == 'anova':
-                # Solo variables numéricas seleccionadas
-                X_num_sel = X_num_scaled[selected_vars]
-                X_final = pd.concat([X_num_sel, X_cat_dummies], axis=1)
-            else:
-                # Todas las variables (para random forest y otros métodos que ya seleccionaron)
-                X_complete = pd.concat([X_num_scaled, X_cat_dummies.fillna(0)], axis=1)
-                X_final = X_complete[selected_vars] if metodo_caracteristicas in ['random_forest'] else X_complete
+            # Combine features based on selection method
+            if feature_method == 'chi2':
+                X_final = X_cat_dummies[selected_features].fillna(0)
+            elif feature_method == 'anova':
+                X_final = X_num_scaled[selected_features]
+            else:  # random_forest
+                X_combined = pd.concat([X_num_scaled, X_cat_dummies.fillna(0)], axis=1)
+                X_final = X_combined[selected_features]
 
-            # División de datos
+            # Train-test split
             X_train, X_test, y_train, y_test = ml_libs['train_test_split'](
                 X_final, y_encoded,
                 test_size=test_size,
@@ -479,85 +771,45 @@ def seccion_preprocesamiento():
                 random_state=RANDOM_STATE
             )
 
-            # Crear modelo
-            if modelo_seleccionado == "Random Forest":
-                modelo = ml_libs['RandomForestClassifier'](
-                    n_estimators=n_estimators,
-                    max_depth=max_depth,
-                    random_state=RANDOM_STATE
-                )
-            elif modelo_seleccionado == "Extra Trees":
-                modelo = ml_libs['ExtraTreesClassifier'](
-                    n_estimators=n_estimators,
-                    max_depth=max_depth,
-                    random_state=RANDOM_STATE
-                )
-            elif modelo_seleccionado == "Gradient Boosting":
-                modelo = ml_libs['HistGradientBoostingClassifier'](
-                    max_iter=max_iter,
-                    learning_rate=learning_rate,
-                    random_state=RANDOM_STATE
-                )
-            elif modelo_seleccionado == "Regresión Logística":
-                modelo = ml_libs['LogisticRegression'](
-                    C=C,
-                    max_iter=max_iter,
-                    random_state=RANDOM_STATE
-                )
-            elif modelo_seleccionado == "SVM Lineal":
-                modelo = ml_libs['SVC'](
-                    kernel='linear',
-                    C=C,
-                    max_iter=max_iter,
-                    probability=True,
-                    random_state=RANDOM_STATE
-                )
+            # Prepare model
+            model = models_available[selected_model]
 
-            # Aplicar balanceo si es necesario
-            if balancing_method == "Class Weight Balanced" and hasattr(modelo, 'class_weight'):
-                modelo.set_params(class_weight='balanced')
+            # Apply class balancing
+            if balancing_method == "Class Weight Balanced" and hasattr(model, 'class_weight'):
+                try:
+                    model.set_params(class_weight='balanced')
+                except Exception:
+                    pass
 
-            # Entrenar modelo
+            # Train model
             start_time = time.time()
 
-            if balancing_method == "SMOTE" and ml_libs['IMBALANCED_AVAILABLE']:
+            if balancing_method == "SMOTE" and ml_libs.get('IMBALANCED_AVAILABLE', False):
                 try:
-                    from imblearn.over_sampling import SMOTE
-                    smote = SMOTE(random_state=RANDOM_STATE)
+                    smote = ml_libs['SMOTE'](random_state=RANDOM_STATE)
                     X_train_balanced, y_train_balanced = smote.fit_resample(X_train, y_train)
-                    modelo.fit(X_train_balanced, y_train_balanced)
-                    st.info("✅ SMOTE aplicado exitosamente")
-                except ImportError:
-                    modelo.fit(X_train, y_train)
-                    st.warning("⚠️ SMOTE no disponible, entrenando sin balanceo")
-            elif balancing_method == "ADASYN" and ml_libs['IMBALANCED_AVAILABLE']:
-                try:
-                    from imblearn.over_sampling import ADASYN
-                    adasyn = ADASYN(random_state=RANDOM_STATE)
-                    X_train_balanced, y_train_balanced = adasyn.fit_resample(X_train, y_train)
-                    modelo.fit(X_train_balanced, y_train_balanced)
-                    st.info("✅ ADASYN aplicado exitosamente")
-                except ImportError:
-                    modelo.fit(X_train, y_train)
-                    st.warning("⚠️ ADASYN no disponible, entrenando sin balanceo")
+                    model.fit(X_train_balanced, y_train_balanced)
+                    st.info("✅ SMOTE aplicado")
+                except Exception as e:
+                    model.fit(X_train, y_train)
+                    st.warning(f"⚠️ SMOTE no disponible/compatible ({e}). Se entrena sin SMOTE.")
             else:
-                modelo.fit(X_train, y_train)
+                model.fit(X_train, y_train)
 
             training_time = time.time() - start_time
 
-            # Realizar predicciones
-            y_pred = modelo.predict(X_test)
-            y_pred_proba = modelo.predict_proba(X_test) if hasattr(modelo, 'predict_proba') else None
+            # Predictions
+            y_pred = model.predict(X_test)
+            y_pred_proba = model.predict_proba(X_test) if hasattr(model, 'predict_proba') else None
 
-            # Calcular métricas
+            # Metrics
             accuracy = ml_libs['accuracy_score'](y_test, y_pred)
             f1 = ml_libs['f1_score'](y_test, y_pred, average='macro')
 
-            # Guardar resultados
-            resultado_individual = {
-                'modelo': modelo,
-                'nombre_modelo': modelo_seleccionado,
-                'metodo_caracteristicas': metodo_caracteristicas,
+            # Save results
+            st.session_state['individual_results'] = {
+                'model': model,
+                'model_name': selected_model,
                 'X_train': X_train,
                 'X_test': X_test,
                 'y_train': y_train,
@@ -567,1370 +819,262 @@ def seccion_preprocesamiento():
                 'accuracy': accuracy,
                 'f1_score': f1,
                 'training_time': training_time,
+                'selected_features': selected_features,
+                'feature_method': feature_method,
                 'balancing_method': balancing_method,
-                'selected_features': selected_vars
+                'feature_names': X_final.columns.tolist()
             }
 
-            st.session_state['resultado_individual'] = resultado_individual
+        st.success(f"✅ Modelo {selected_model} entrenado!")
 
-            st.success(f"✅ Modelo {modelo_seleccionado} entrenado exitosamente!")
-
-        # Mostrar métricas principales
+        # Show metrics
         col1, col2, col3, col4 = st.columns(4)
-
         with col1:
-            st.metric("🎯 Precisión", f"{accuracy:.4f}")
-
+            st.metric("Accuracy", f"{accuracy:.3f}")
         with col2:
-            st.metric("📊 F1-Score (Macro)", f"{f1:.4f}")
-
+            st.metric("F1 (macro)", f"{f1:.3f}")
         with col3:
-            st.metric("⏱️ Tiempo de Entrenamiento", f"{training_time:.2f}s")
-
+            st.metric("Clases", len(st.session_state['label_encoder'].classes_))
         with col4:
-            st.metric("🔧 Características Usadas", len(selected_vars))
+            st.metric("Tiempo de entrenamiento (s)", f"{training_time:.2f}")
 
-        # Visualizaciones
-        st.subheader("📈 Resultados del Modelo")
+        # Detailed outputs
+        res = st.session_state['individual_results']
+        y_test = res['y_test']
+        y_pred = res['y_pred']
+        y_proba = res['y_pred_proba']
+        classes_names = st.session_state['label_encoder'].classes_
 
-        tab1, tab2, tab3 = st.tabs(["📊 Reporte de Clasificación", "🔥 Matriz de Confusión", "📈 Curva ROC"])
+        tab1, tab2, tab3, tab4 = st.tabs(["Matriz de Confusión", "ROC", "Reporte de Clasificación", "Importancia de Variables"])
 
         with tab1:
-            # Reporte de clasificación
-            class_report = ml_libs['classification_report'](
-                y_test, y_pred,
-                target_names=label_encoder.classes_,
-                output_dict=True
-            )
-
-            # Convertir a DataFrame para mejor visualización
-            report_df = pd.DataFrame(class_report).transpose()
-            report_df = report_df.round(4)
-
-            st.dataframe(report_df, use_container_width=True)
+            cm = ml_libs['confusion_matrix'](y_test, y_pred)
+            fig_cm = plot_confusion_matrix(cm, classes_names)
+            st.plotly_chart(fig_cm, use_container_width=True)
 
         with tab2:
-            # Matriz de confusión
-            cm = ml_libs['confusion_matrix'](y_test, y_pred)
-
-            # Crear heatmap con plotly
-            fig = px.imshow(
-                cm,
-                labels=dict(x="Predicción", y="Valor Real", color="Cantidad"),
-                x=label_encoder.classes_,
-                y=label_encoder.classes_,
-                color_continuous_scale='Blues',
-                text_auto=True,
-                title=f"Matriz de Confusión - {modelo_seleccionado}"
-            )
-
-            st.plotly_chart(fig, use_container_width=True)
+            if y_proba is not None:
+                fig_roc, roc_auc_val = _plot_roc_generic(y_test, y_proba, st.session_state['label_encoder'], ml_libs)
+                if fig_roc is not None:
+                    st.plotly_chart(fig_roc, use_container_width=True)
+                    st.info(f"AUC: {roc_auc_val:.3f}")
+            else:
+                st.warning("El modelo no expone probabilidades (predict_proba).")
 
         with tab3:
-            # Curva ROC (solo para clasificación binaria)
-            if len(np.unique(y_test)) == 2 and y_pred_proba is not None:
-                fpr, tpr, _ = ml_libs['roc_curve'](y_test, y_pred_proba[:, 1])
-                roc_auc = ml_libs['auc'](fpr, tpr)
+            report_dict = ml_libs['classification_report'](y_test, y_pred, target_names=classes_names, output_dict=True)
+            report_df = pd.DataFrame(report_dict).T.round(3)
+            st.dataframe(report_df)
 
-                fig = go.Figure()
+        with tab4:
+            _show_feature_importance(res['model'], res['feature_names'])
 
-                # Curva ROC
-                fig.add_trace(go.Scatter(
-                    x=fpr, y=tpr,
-                    mode='lines',
-                    name=f'ROC Curve (AUC = {roc_auc:.3f})',
-                    line=dict(color='darkorange', width=2)
-                ))
-
-                # Línea diagonal
-                fig.add_trace(go.Scatter(
-                    x=[0, 1], y=[0, 1],
-                    mode='lines',
-                    name='Clasificador Aleatorio',
-                    line=dict(color='navy', width=2, dash='dash')
-                ))
-
-                fig.update_layout(
-                    title=f'Curva ROC - {modelo_seleccionado}',
-                    xaxis_title='Tasa de Falsos Positivos',
-                    yaxis_title='Tasa de Verdaderos Positivos',
-                    xaxis=dict(range=[0, 1]),
-                    yaxis=dict(range=[0, 1]),
-                    width=600,
-                    height=500
-                )
-
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("La curva ROC solo está disponible para clasificación binaria con probabilidades.")
-
-def seccion_comparacion_modelos():
+def section_model_comparison():
+    """Train and compare multiple models on the same split"""
+    st.header("🔬 Comparar Modelos")
     ml_libs = get_ml_libs()
     if ml_libs is None:
-        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
-        if 'ml_libs_error' in st.session_state:
-            st.code(st.session_state['ml_libs_error'])
-        return
-    st.header("🏆 Comparación de Modelos")
-
-    if 'feature_selection_results' not in st.session_state:
-        st.warning("⚠️ Primero debes ejecutar la selección de características.")
         return
 
-    # Preparar datos
+    req = ['X_num_scaled', 'X_cat_dummies', 'y_encoded', 'label_encoder', 'feature_selection_results']
+    if not all(k in st.session_state for k in req):
+        st.warning("⚠️ Ejecuta preprocesamiento y selección de características primero.")
+        return
+
     X_num_scaled = st.session_state['X_num_scaled']
     X_cat_dummies = st.session_state['X_cat_dummies']
     y_encoded = st.session_state['y_encoded']
     label_encoder = st.session_state['label_encoder']
 
-    st.subheader("Configuración de la Comparación")
-
+    st.subheader("Configuración")
     col1, col2 = st.columns(2)
 
     with col1:
-        # Selección de modelos a comparar
-        modelos_disponibles = {
-            "Random Forest": ml_libs['RandomForestClassifier'](random_state=RANDOM_STATE),
-            "Extra Trees": ml_libs['ExtraTreesClassifier'](random_state=RANDOM_STATE),
-            "Gradient Boosting": ml_libs['HistGradientBoostingClassifier'](random_state=RANDOM_STATE),
-            "Regresión Logística": ml_libs['LogisticRegression'](random_state=RANDOM_STATE, max_iter=1000),
-            "SVM Lineal": ml_libs['SVC'](kernel='linear', random_state=RANDOM_STATE, probability=True, max_iter=1000)
-        }
-
-        modelos_seleccionados = st.multiselect(
-            "Selecciona modelos para comparar:",
-            list(modelos_disponibles.keys()),
-            default=["Random Forest", "Regresión Logística"]
-        )
-
-        # Método de selección de características
-        metodo_caracteristicas = st.selectbox(
+        feature_method = st.selectbox(
             "Método de selección de características:",
-            list(st.session_state['feature_selection_results'].keys())
+            list(st.session_state['feature_selection_results'].keys()),
+            key="cmp_feature_method"
         )
+        test_size = st.slider("Tamaño del conjunto de prueba (%)", 10, 40, 25, key="cmp_test_size") / 100
 
     with col2:
-        # Parámetros de comparación
-        test_size = st.slider("Tamaño del conjunto de prueba (%)", 10, 40, 25) / 100
-        cv_folds = st.slider("Número de folds para CV", 3, 10, 5)
-
-        # Método de balanceo
         balancing_method = st.selectbox(
             "Método de balanceo:",
-            ["Ninguno", "Class Weight Balanced"]
+            ["Ninguno", "Class Weight Balanced", "SMOTE"],
+            key="cmp_balancing"
+        )
+        models_to_run = st.multiselect(
+            "Modelos a comparar:",
+            ["Random Forest", "Extra Trees", "Gradient Boosting", "Logistic Regression", "SVM Linear"],
+            default=["Random Forest", "Extra Trees", "Gradient Boosting", "Logistic Regression"]
         )
 
-        # Optimización de hiperparámetros
-        optimize_hyperparams = st.checkbox("Optimizar hiperparámetros", value=True)
-        n_iter = st.slider("Iteraciones para optimización", 5, 50, 10) if optimize_hyperparams else 0
-
-    if st.button("🚀 Ejecutar Comparación", type="primary"):
-        if not modelos_seleccionados:
-            st.error("⚠️ Selecciona al menos un modelo para comparar.")
-            return
-
-        with st.spinner("Ejecutando comparación de modelos..."):
-            # Preparar datos
-            feature_results = st.session_state['feature_selection_results'][metodo_caracteristicas]
-            selected_vars = feature_results['selected_vars']
-
-            # Preparar dataset final
-            if metodo_caracteristicas == 'chi2':
-                X_cat_sel = st.session_state['X_cat_processed'][selected_vars]
-                X_cat_sel_dum = pd.get_dummies(X_cat_sel, drop_first=True, prefix_sep='=')
-                X_final = pd.concat([X_num_scaled, X_cat_sel_dum], axis=1)
-            elif metodo_caracteristicas == 'anova':
-                X_num_sel = X_num_scaled[selected_vars]
-                X_final = pd.concat([X_num_sel, X_cat_dummies], axis=1)
+    if st.button("🏎️ Ejecutar comparación", type="primary"):
+        with st.spinner("Entrenando y evaluando modelos..."):
+            # Features
+            selected_features = st.session_state['feature_selection_results'][feature_method]['selected_vars']
+            if feature_method == 'chi2':
+                X_final = X_cat_dummies[selected_features].fillna(0)
+            elif feature_method == 'anova':
+                X_final = X_num_scaled[selected_features]
             else:
-                X_complete = pd.concat([X_num_scaled, X_cat_dummies.fillna(0)], axis=1)
-                X_final = X_complete[selected_vars] if metodo_caracteristicas in ['random_forest'] else X_complete
+                X_combined = pd.concat([X_num_scaled, X_cat_dummies.fillna(0)], axis=1)
+                X_final = X_combined[selected_features]
 
-            # División de datos
             X_train, X_test, y_train, y_test = ml_libs['train_test_split'](
-                X_final, y_encoded,
-                test_size=test_size,
-                stratify=y_encoded,
-                random_state=RANDOM_STATE
+                X_final, y_encoded, test_size=test_size, stratify=y_encoded, random_state=RANDOM_STATE
             )
 
-            # Resultados de comparación
-            resultados_comparacion = {}
-
-            # Definir espacios de parámetros para optimización
-            param_grids = {
-                "Random Forest": {
-                    'n_estimators': ml_libs['randint'](50, 200),
-                    'max_depth': [10, 20, 30, None],
-                    'min_samples_split': ml_libs['randint'](2, 10)
-                },
-                "Extra Trees": {
-                    'n_estimators': ml_libs['randint'](50, 200),
-                    'max_depth': [10, 20, 30, None],
-                    'min_samples_split': ml_libs['randint'](2, 10)
-                },
-                "Gradient Boosting": {
-                    'max_iter': ml_libs['randint'](50, 200),
-                    'learning_rate': ml_libs['uniform'](0.05, 0.25),
-                    'max_depth': ml_libs['randint'](3, 10)
-                },
-                "Regresión Logística": {
-                    'C': ml_libs['uniform'](0.1, 10),
-                    'max_iter': [1000, 2000]
-                },
-                "SVM Lineal": {
-                    'C': ml_libs['uniform'](0.1, 10),
-                    'max_iter': [1000, 2000]
-                }
+            base_models = {
+                "Random Forest": ml_libs['RandomForestClassifier'](random_state=RANDOM_STATE, n_jobs=-1),
+                "Extra Trees": ml_libs['ExtraTreesClassifier'](random_state=RANDOM_STATE, n_jobs=-1),
+                "Gradient Boosting": ml_libs['HistGradientBoostingClassifier'](random_state=RANDOM_STATE),
+                "Logistic Regression": ml_libs['LogisticRegression'](random_state=RANDOM_STATE, max_iter=2000, n_jobs=-1),
+                "SVM Linear": ml_libs['SVC'](kernel='linear', random_state=RANDOM_STATE, probability=True, max_iter=5000)
             }
 
-            # Entrenar cada modelo
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+            results = []
+            details = {}
+            for name in models_to_run:
+                model = base_models[name]
+                # Balanceo
+                if balancing_method == "Class Weight Balanced" and hasattr(model, 'class_weight'):
+                    try:
+                        model.set_params(class_weight='balanced')
+                    except Exception:
+                        pass
 
-            for i, nombre_modelo in enumerate(modelos_seleccionados):
-                status_text.text(f"Entrenando {nombre_modelo}...")
-                progress_bar.progress((i + 1) / len(modelos_seleccionados))
+                start = time.time()
+                if balancing_method == "SMOTE" and ml_libs.get('IMBALANCED_AVAILABLE', False):
+                    try:
+                        smote = ml_libs['SMOTE'](random_state=RANDOM_STATE)
+                        X_tr, y_tr = smote.fit_resample(X_train, y_train)
+                        model.fit(X_tr, y_tr)
+                        smote_used = True
+                    except Exception:
+                        model.fit(X_train, y_train)
+                        smote_used = False
+                else:
+                    model.fit(X_train, y_train)
+                    smote_used = False
+                ttrain = time.time() - start
 
-                try:
-                    start_time = time.time()
+                y_pred = model.predict(X_test)
+                y_proba = model.predict_proba(X_test) if hasattr(model, 'predict_proba') else None
+                acc = ml_libs['accuracy_score'](y_test, y_pred)
+                f1 = ml_libs['f1_score'](y_test, y_pred, average='macro')
 
-                    # Obtener modelo base
-                    modelo_base = modelos_disponibles[nombre_modelo]
+                auc_val = None
+                if y_proba is not None:
+                    _, auc_val = _plot_roc_generic(y_test, y_proba, label_encoder, ml_libs)
 
-                    # Aplicar balanceo si es necesario
-                    if balancing_method == "Class Weight Balanced" and hasattr(modelo_base, 'class_weight'):
-                        modelo_base.set_params(class_weight='balanced')
+                results.append({
+                    'Modelo': name,
+                    'Accuracy': round(acc, 4),
+                    'F1_macro': round(f1, 4),
+                    'AUC_macro': round(auc_val, 4) if auc_val is not None else None,
+                    'Tiempo_s': round(ttrain, 2),
+                    'SMOTE': smote_used
+                })
 
-                    # Optimización de hiperparámetros
-                    if optimize_hyperparams and nombre_modelo in param_grids:
-                        random_search = ml_libs['RandomizedSearchCV'](
-                            modelo_base,
-                            param_distributions=param_grids[nombre_modelo],
-                            n_iter=n_iter,
-                            cv=cv_folds,
-                            scoring='f1_macro',
-                            random_state=RANDOM_STATE,
-                            n_jobs=-1
-                        )
+                details[name] = {
+                    'model': model,
+                    'y_pred': y_pred,
+                    'y_proba': y_proba,
+                    'cm': ml_libs['confusion_matrix'](y_test, y_pred)
+                }
 
-                        random_search.fit(X_train, y_train)
-                        best_model = random_search.best_estimator_
-                        cv_score = random_search.best_score_
-                        best_params = random_search.best_params_
-                    else:
-                        modelo_base.fit(X_train, y_train)
-                        best_model = modelo_base
-                        cv_score = None
-                        best_params = {}
-
-                    # Predicciones
-                    y_pred = best_model.predict(X_test)
-                    y_pred_proba = best_model.predict_proba(X_test) if hasattr(best_model, 'predict_proba') else None
-
-                    # Métricas
-                    accuracy = ml_libs['accuracy_score'](y_test, y_pred)
-                    f1 = ml_libs['f1_score'](y_test, y_pred, average='macro')
-
-                    training_time = time.time() - start_time
-
-                    # Guardar resultados
-                    resultados_comparacion[nombre_modelo] = {
-                        'model': best_model,
-                        'cv_score': cv_score,
-                        'test_accuracy': accuracy,
-                        'test_f1': f1,
-                        'y_pred': y_pred,
-                        'y_pred_proba': y_pred_proba,
-                        'training_time': training_time,
-                        'best_params': best_params
-                    }
-
-                except Exception as e:
-                    st.error(f"Error entrenando {nombre_modelo}: {str(e)}")
-                    resultados_comparacion[nombre_modelo] = {
-                        'error': str(e),
-                        'training_time': time.time() - start_time
-                    }
-
-            progress_bar.empty()
-            status_text.empty()
-
-            # Guardar en session_state
-            st.session_state['resultados_comparacion'] = {
-                'results': resultados_comparacion,
-                'X_train': X_train,
+            df_results = pd.DataFrame(results).sort_values(by=['F1_macro','Accuracy'], ascending=False)
+            st.session_state['comparison_results'] = {
+                'table': df_results,
+                'details': details,
                 'X_test': X_test,
-                'y_train': y_train,
                 'y_test': y_test,
-                'selected_features': selected_vars,
-                'feature_method': metodo_caracteristicas
+                'feature_names': X_final.columns.tolist()
             }
 
-            st.success(f"✅ Comparación completada! {len(modelos_seleccionados)} modelos entrenados.")
+        st.success("✅ Comparación completa")
 
-        # Mostrar resultados
-        mostrar_resultados_comparacion()
+        # Mostrar tabla y gráfico
+        df_results = st.session_state['comparison_results']['table']
+        st.subheader("Resultados comparativos")
+        st.dataframe(df_results, use_container_width=True)
 
-def mostrar_resultados_comparacion():
-    ml_libs = get_ml_libs()
-    if ml_libs is None:
-        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
-        if 'ml_libs_error' in st.session_state:
-            st.code(st.session_state['ml_libs_error'])
-        return
-    """Muestra los resultados de la comparación de modelos"""
-    if 'resultados_comparacion' not in st.session_state:
-        return
+        fig_bar = px.bar(df_results, x='Modelo', y='F1_macro', title='F1 (macro) por modelo')
+        st.plotly_chart(fig_bar, use_container_width=True)
 
-    resultados = st.session_state['resultados_comparacion']['results']
-    y_test = st.session_state['resultados_comparacion']['y_test']
-    label_encoder = st.session_state['label_encoder']
+        # Detalles por modelo
+        st.subheader("🔎 Detalles de un modelo")
+        model_to_inspect = st.selectbox("Selecciona un modelo", df_results['Modelo'].tolist())
+        det = st.session_state['comparison_results']['details'][model_to_inspect]
+        classes_names = label_encoder.classes_
+        cm_fig = plot_confusion_matrix(det['cm'], classes_names)
+        st.plotly_chart(cm_fig, use_container_width=True)
 
-    st.subheader("📊 Resultados de la Comparación")
-
-    # Tabla comparativa
-    comparison_data = []
-    successful_models = {}
-
-    for nombre, resultado in resultados.items():
-        if 'error' not in resultado:
-            comparison_data.append({
-                'Modelo': nombre,
-                'CV F1-Score': f"{resultado['cv_score']:.4f}" if resultado['cv_score'] else "N/A",
-                'Test Accuracy': f"{resultado['test_accuracy']:.4f}",
-                'Test F1-Score': f"{resultado['test_f1']:.4f}",
-                'Tiempo (s)': f"{resultado['training_time']:.2f}"
-            })
-            successful_models[nombre] = resultado
+        if det['y_proba'] is not None:
+            fig_roc, auc_val = _plot_roc_generic(
+                st.session_state['comparison_results']['y_test'],
+                det['y_proba'],
+                label_encoder, ml_libs
+            )
+            st.plotly_chart(fig_roc, use_container_width=True)
+            st.info(f"AUC: {auc_val:.3f}")
         else:
-            comparison_data.append({
-                'Modelo': nombre,
-                'CV F1-Score': "ERROR",
-                'Test Accuracy': "ERROR",
-                'Test F1-Score': "ERROR",
-                'Tiempo (s)': f"{resultado['training_time']:.2f}"
-            })
-
-    comparison_df = pd.DataFrame(comparison_data)
-    st.dataframe(comparison_df, use_container_width=True)
-
-    if successful_models:
-        # Identificar el mejor modelo
-        best_model_name = max(successful_models.items(), key=lambda x: x[1]['test_f1'])[0]
-
-        st.markdown(
-            f"""
-            <div class="success-card">
-                <h4>🏆 Mejor Modelo</h4>
-                <p><strong>{best_model_name}</strong></p>
-                <p>F1-Score: {successful_models[best_model_name]['test_f1']:.4f}</p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        # Visualizaciones comparativas
-        st.subheader("📊 Visualizaciones Comparativas")
-
-        tab1, tab2, tab3 = st.tabs(["📈 Métricas", "⏱️ Tiempos", "🔄 Matrices de Confusión"])
-
-        with tab1:
-            # Gráfico de barras con métricas
-            metrics_data = []
-            for nombre, resultado in successful_models.items():
-                metrics_data.extend([
-                    {'Modelo': nombre, 'Métrica': 'Accuracy', 'Valor': resultado['test_accuracy']},
-                    {'Modelo': nombre, 'Métrica': 'F1-Score', 'Valor': resultado['test_f1']}
-                ])
-
-            metrics_df = pd.DataFrame(metrics_data)
-
-            fig = px.bar(
-                metrics_df,
-                x='Modelo',
-                y='Valor',
-                color='Métrica',
-                title="Comparación de Métricas de Rendimiento",
-                barmode='group'
-            )
-            fig.update_layout(yaxis_range=[0, 1])
-            st.plotly_chart(fig, use_container_width=True)
-
-        with tab2:
-            # Gráfico de tiempos de entrenamiento
-            tiempo_data = [(nombre, resultado['training_time'])
-                          for nombre, resultado in successful_models.items()]
-
-            tiempo_df = pd.DataFrame(tiempo_data, columns=['Modelo', 'Tiempo'])
-
-            fig = px.bar(
-                tiempo_df,
-                x='Modelo',
-                y='Tiempo',
-                title="Tiempos de Entrenamiento (segundos)"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        with tab3:
-            # Matrices de confusión para cada modelo
-            for nombre, resultado in successful_models.items():
-                if 'y_pred' in resultado:
-                    cm = ml_libs['confusion_matrix'](y_test, resultado['y_pred'])
-
-                    fig = px.imshow(
-                        cm,
-                        labels=dict(x="Predicción", y="Valor Real", color="Cantidad"),
-                        x=label_encoder.classes_,
-                        y=label_encoder.classes_,
-                        color_continuous_scale='Blues',
-                        text_auto=True,
-                        title=f"Matriz de Confusión - {nombre}"
-                    )
-
-                    st.plotly_chart(fig, use_container_width=True)
-
-def seccion_resultados():
-    ml_libs = get_ml_libs()
-    if ml_libs is None:
-        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
-        if 'ml_libs_error' in st.session_state:
-            st.code(st.session_state['ml_libs_error'])
-        return
-    st.header("📈 Resultados y Visualizaciones")
-
-    # Verificar si hay resultados disponibles
-    has_individual = 'resultado_individual' in st.session_state
-    has_comparison = 'resultados_comparacion' in st.session_state
-
-    if not has_individual and not has_comparison:
-        st.warning("⚠️ No hay resultados disponibles. Ejecuta primero el modelado individual o la comparación de modelos.")
-        return
-
-    # Selector de tipo de resultado
-    result_type = st.selectbox(
-        "Selecciona el tipo de resultado a visualizar:",
-        ["Modelo Individual", "Comparación de Modelos"] if has_individual and has_comparison
-        else (["Modelo Individual"] if has_individual else ["Comparación de Modelos"])
-    )
-
-    if result_type == "Modelo Individual" and has_individual:
-        mostrar_resultados_individuales()
-    elif result_type == "Comparación de Modelos" and has_comparison:
-        mostrar_visualizaciones_comparacion()
-
-def mostrar_resultados_individuales():
-    ml_libs = get_ml_libs()
-    if ml_libs is None:
-        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
-        if 'ml_libs_error' in st.session_state:
-            st.code(st.session_state['ml_libs_error'])
-        return
-    """Muestra resultados detallados del modelo individual"""
-    resultado = st.session_state['resultado_individual']
-    label_encoder = st.session_state['label_encoder']
-
-    st.subheader(f"📊 Resultados Detallados - {resultado['nombre_modelo']}")
-
-    # Métricas principales
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric("🎯 Precisión", f"{resultado['accuracy']:.4f}")
-
-    with col2:
-        st.metric("📊 F1-Score", f"{resultado['f1_score']:.4f}")
-
-    with col3:
-        st.metric("⏱️ Tiempo", f"{resultado['training_time']:.2f}s")
-
-    with col4:
-        st.metric("🔧 Características", len(resultado['selected_features']))
-
-    # Información del modelo
-    st.markdown(
-        f"""
-        <div class="metric-card">
-            <h4>ℹ️ Información del Modelo</h4>
-            <p><strong>Modelo:</strong> {resultado['nombre_modelo']}</p>
-            <p><strong>Método de selección:</strong> {resultado['metodo_caracteristicas']}</p>
-            <p><strong>Balanceo:</strong> {resultado['balancing_method']}</p>
-            <p><strong>Tamaño entrenamiento:</strong> {resultado['X_train'].shape[0]:,} muestras</p>
-            <p><strong>Tamaño prueba:</strong> {resultado['X_test'].shape[0]:,} muestras</p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # Visualizaciones detalladas
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Métricas Detalladas", "🔥 Matriz de Confusión", "📈 Análisis de Características", "🎯 Predicciones"])
-
-    with tab1:
-        # Reporte de clasificación detallado
-        y_test = resultado['y_test']
-        y_pred = resultado['y_pred']
-
-        class_report = ml_libs['classification_report'](
-            y_test, y_pred,
-            target_names=label_encoder.classes_,
-            output_dict=True
-        )
-
-        # Convertir a DataFrame
-        report_df = pd.DataFrame(class_report).transpose()
-        report_df = report_df.round(4)
-
-        st.subheader("Reporte de Clasificación Completo")
-        st.dataframe(report_df, use_container_width=True)
-
-        # Métricas por clase en gráfico
-        class_metrics = report_df.drop(['accuracy', 'macro avg', 'weighted avg'], errors='ignore')
-
-        if not class_metrics.empty:
-            fig = go.Figure()
-
-            for metric in ['precision', 'recall', 'f1-score']:
-                if metric in class_metrics.columns:
-                    fig.add_trace(go.Bar(
-                        name=metric.capitalize(),
-                        x=class_metrics.index,
-                        y=class_metrics[metric],
-                        text=class_metrics[metric].round(3),
-                        textposition='auto',
-                    ))
-
-            fig.update_layout(
-                title='Métricas por Clase',
-                xaxis_title='Clases',
-                yaxis_title='Valor',
-                barmode='group',
-                yaxis_range=[0, 1]
-            )
-
-            st.plotly_chart(fig, use_container_width=True)
-
-    with tab2:
-        # Matriz de confusión interactiva
-        cm = ml_libs['confusion_matrix'](y_test, y_pred)
-
-        # Matriz de confusión normalizada
-        cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.subheader("Matriz de Confusión (Absoluta)")
-            fig1 = px.imshow(
-                cm,
-                labels=dict(x="Predicción", y="Valor Real", color="Cantidad"),
-                x=label_encoder.classes_,
-                y=label_encoder.classes_,
-                color_continuous_scale='Blues',
-                text_auto=True,
-                aspect="auto"
-            )
-            st.plotly_chart(fig1, use_container_width=True)
-
-        with col2:
-            st.subheader("Matriz de Confusión (Normalizada)")
-            fig2 = px.imshow(
-                cm_normalized,
-                labels=dict(x="Predicción", y="Valor Real", color="Proporción"),
-                x=label_encoder.classes_,
-                y=label_encoder.classes_,
-                color_continuous_scale='Blues',
-                text_auto='.3f',
-                aspect="auto"
-            )
-            st.plotly_chart(fig2, use_container_width=True)
-
-        # Análisis de errores
-        st.subheader("Análisis de Errores")
-
-        # Calcular errores por clase
-        errors_data = []
-        for i, clase_real in enumerate(label_encoder.classes_):
-            for j, clase_pred in enumerate(label_encoder.classes_):
-                if i != j and cm[i, j] > 0:  # Solo errores
-                    errors_data.append({
-                        'Clase Real': clase_real,
-                        'Predicción Incorrecta': clase_pred,
-                        'Cantidad': cm[i, j],
-                        'Porcentaje': f"{cm_normalized[i, j]:.1%}"
-                    })
-
-        if errors_data:
-            errors_df = pd.DataFrame(errors_data).sort_values('Cantidad', ascending=False)
-            st.dataframe(errors_df, use_container_width=True)
-        else:
-            st.success("¡No hay errores de clasificación!")
-
-    with tab3:
-        # Análisis de importancia de características (si disponible)
-        modelo = resultado['modelo']
-
-        if hasattr(modelo, 'feature_importances_'):
-            st.subheader("Importancia de Características")
-
-            importances = modelo.feature_importances_
-            feature_names = resultado['X_train'].columns
-
-            # Crear DataFrame de importancias
-            importance_df = pd.DataFrame({
-                'Característica': feature_names,
-                'Importancia': importances
-            }).sort_values('Importancia', ascending=False)
-
-            # Top 20 características
-            top_features = importance_df.head(20)
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                fig = px.bar(
-                    top_features,
-                    x='Importancia',
-                    y='Característica',
-                    orientation='h',
-                    title='Top 20 Características Más Importantes'
-                )
-                fig.update_layout(yaxis={'categoryorder': 'total ascending'})
-                st.plotly_chart(fig, use_container_width=True)
-
-            with col2:
-                st.subheader("Tabla de Importancias")
-                st.dataframe(
-                    top_features.reset_index(drop=True),
-                    use_container_width=True
-                )
-
-        elif hasattr(modelo, 'coef_'):
-            st.subheader("Coeficientes del Modelo")
-
-            coefs = modelo.coef_[0] if len(modelo.coef_.shape) > 1 else modelo.coef_
-            feature_names = resultado['X_train'].columns
-
-            # Crear DataFrame de coeficientes
-            coef_df = pd.DataFrame({
-                'Característica': feature_names,
-                'Coeficiente': coefs,
-                'Importancia_Abs': np.abs(coefs)
-            }).sort_values('Importancia_Abs', ascending=False)
-
-            # Top 20 características
-            top_coefs = coef_df.head(20)
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                fig = px.bar(
-                    top_coefs,
-                    x='Coeficiente',
-                    y='Característica',
-                    orientation='h',
-                    title='Top 20 Coeficientes Más Importantes',
-                    color='Coeficiente',
-                    color_continuous_scale='RdBu'
-                )
-                fig.update_layout(yaxis={'categoryorder': 'total ascending'})
-                st.plotly_chart(fig, use_container_width=True)
-
-            with col2:
-                st.subheader("Tabla de Coeficientes")
-                st.dataframe(
-                    top_coefs[['Característica', 'Coeficiente']].reset_index(drop=True),
-                    use_container_width=True
-                )
-
-        else:
-            st.info("Este modelo no proporciona información sobre la importancia de características.")
-
-        # Información sobre características seleccionadas
-        st.subheader("Características Seleccionadas")
-
-        selected_features = resultado['selected_features']
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.markdown(
-                f"""
-                <div class="metric-card">
-                    <h4>📊 Estadísticas de Selección</h4>
-                    <p><strong>Total seleccionadas:</strong> {len(selected_features)}</p>
-                    <p><strong>Método usado:</strong> {resultado['metodo_caracteristicas']}</p>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-        with col2:
-            # Mostrar algunas características seleccionadas
-            st.subheader("Muestra de Características")
-            sample_features = selected_features[:10] if len(selected_features) > 10 else selected_features
-
-            for i, feature in enumerate(sample_features, 1):
-                st.write(f"{i}. {feature}")
-
-            if len(selected_features) > 10:
-                st.write(f"... y {len(selected_features) - 10} más")
-
-    with tab4:
-        # Análisis de predicciones
-        st.subheader("Análisis de Predicciones")
-
-        # Distribución de predicciones vs real
-        col1, col2 = st.columns(2)
-
-        with col1:
-            # Distribución real
-            real_counts = pd.Series(y_test).map(lambda x: label_encoder.classes_[x]).value_counts()
-
-            fig1 = px.pie(
-                values=real_counts.values,
-                names=real_counts.index,
-                title="Distribución Real (Test)"
-            )
-            st.plotly_chart(fig1, use_container_width=True)
-
-        with col2:
-            # Distribución predicha
-            pred_counts = pd.Series(y_pred).map(lambda x: label_encoder.classes_[x]).value_counts()
-
-            fig2 = px.pie(
-                values=pred_counts.values,
-                names=pred_counts.index,
-                title="Distribución Predicha"
-            )
-            st.plotly_chart(fig2, use_container_width=True)
-
-        # Tabla de comparación
-        st.subheader("Comparación de Distribuciones")
-
-        comparison_dist = pd.DataFrame({
-            'Clase': label_encoder.classes_,
-            'Real': [real_counts.get(clase, 0) for clase in label_encoder.classes_],
-            'Predicho': [pred_counts.get(clase, 0) for clase in label_encoder.classes_]
-        })
-
-        comparison_dist['Diferencia'] = comparison_dist['Predicho'] - comparison_dist['Real']
-        comparison_dist['% Real'] = (comparison_dist['Real'] / comparison_dist['Real'].sum() * 100).round(1)
-        comparison_dist['% Predicho'] = (comparison_dist['Predicho'] / comparison_dist['Predicho'].sum() * 100).round(1)
-
-        st.dataframe(comparison_dist, use_container_width=True)
-
-        # Probabilidades de predicción (si disponible)
-        if resultado['y_pred_proba'] is not None:
-            st.subheader("Distribución de Probabilidades")
-
-            y_pred_proba = resultado['y_pred_proba']
-
-            # Histograma de probabilidades máximas
-            max_probs = np.max(y_pred_proba, axis=1)
-
-            fig = px.histogram(
-                x=max_probs,
-                nbins=20,
-                title="Distribución de Probabilidades Máximas",
-                labels={'x': 'Probabilidad Máxima', 'y': 'Frecuencia'}
-            )
-
-            st.plotly_chart(fig, use_container_width=True)
-
-            # Estadísticas de confianza
-            confidence_stats = {
-                'Probabilidad media': f"{np.mean(max_probs):.4f}",
-                'Probabilidad mínima': f"{np.min(max_probs):.4f}",
-                'Probabilidad máxima': f"{np.max(max_probs):.4f}",
-                'Desviación estándar': f"{np.std(max_probs):.4f}"
-            }
-
-            for metric, value in confidence_stats.items():
-                st.metric(metric, value)
-
-def mostrar_visualizaciones_comparacion():
-    ml_libs = get_ml_libs()
-    if ml_libs is None:
-        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
-        if 'ml_libs_error' in st.session_state:
-            st.code(st.session_state['ml_libs_error'])
-        return
-    """Muestra visualizaciones avanzadas de la comparación"""
-    if 'resultados_comparacion' not in st.session_state:
-        return
-
-    resultados = st.session_state['resultados_comparacion']['results']
-    y_test = st.session_state['resultados_comparacion']['y_test']
-    label_encoder = st.session_state['label_encoder']
-
-    st.subheader("📊 Visualizaciones Avanzadas de Comparación")
-
-    # Filtrar solo modelos exitosos
-    successful_models = {k: v for k, v in resultados.items() if 'error' not in v}
-
-    if not successful_models:
-        st.error("No hay modelos exitosos para visualizar.")
-        return
-
-    tab1, tab2, tab3, tab4 = st.tabs(["🏆 Ranking de Modelos", "📈 Análisis de Rendimiento", "⚖️ Trade-offs", "🔍 Análisis Detallado"])
-
-    with tab1:
-        st.subheader("Ranking de Modelos")
-
-        # Crear ranking basado en múltiples métricas
-        ranking_data = []
-        for nombre, resultado in successful_models.items():
-            ranking_data.append({
-                'Modelo': nombre,
-                'Accuracy': resultado['test_accuracy'],
-                'F1-Score': resultado['test_f1'],
-                'Tiempo': resultado['training_time'],
-                'CV_Score': resultado['cv_score'] if resultado['cv_score'] else 0
-            })
-
-        ranking_df = pd.DataFrame(ranking_data)
-
-        # Normalizar métricas para ranking (tiempo invertido)
-        ranking_df['Accuracy_norm'] = ranking_df['Accuracy'] / ranking_df['Accuracy'].max()
-        ranking_df['F1_norm'] = ranking_df['F1-Score'] / ranking_df['F1-Score'].max()
-        ranking_df['Tiempo_norm'] = ranking_df['Tiempo'].min() / ranking_df['Tiempo']  # Invertir tiempo
-        ranking_df['CV_norm'] = ranking_df['CV_Score'] / ranking_df['CV_Score'].max() if ranking_df['CV_Score'].max() > 0 else 0
-
-        # Score compuesto
-        ranking_df['Score_Compuesto'] = (
-            ranking_df['Accuracy_norm'] * 0.3 +
-            ranking_df['F1_norm'] * 0.4 +
-            ranking_df['Tiempo_norm'] * 0.2 +
-            ranking_df['CV_norm'] * 0.1
-        )
-
-        ranking_df = ranking_df.sort_values('Score_Compuesto', ascending=False)
-
-        # Gráfico de ranking
-        fig = px.bar(
-            ranking_df,
-            x='Modelo',
-            y='Score_Compuesto',
-            title='Ranking Compuesto de Modelos',
-            color='Score_Compuesto',
-            color_continuous_scale='viridis'
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Tabla de ranking
-        display_cols = ['Modelo', 'Accuracy', 'F1-Score', 'Tiempo', 'Score_Compuesto']
-        st.dataframe(ranking_df[display_cols].round(4), use_container_width=True)
-
-    with tab2:
-        st.subheader("Análisis de Rendimiento")
-
-        # Radar chart de métricas
-        metrics_for_radar = []
-        models_names = []
-
-        for nombre, resultado in successful_models.items():
-            models_names.append(nombre)
-            metrics_for_radar.append([
-                resultado['test_accuracy'],
-                resultado['test_f1'],
-                1 / (resultado['training_time'] + 0.1),  # Invertir tiempo
-                resultado['cv_score'] if resultado['cv_score'] else 0
-            ])
-
-        # Normalizar métricas para radar chart
-        metrics_array = np.array(metrics_for_radar)
-        metrics_normalized = metrics_array / metrics_array.max(axis=0)
-
-        # Crear radar chart
-        categories = ['Accuracy', 'F1-Score', 'Velocidad', 'CV Score']
-
-        fig = go.Figure()
-
-        colors = px.colors.qualitative.Set1[:len(models_names)]
-
-        for i, (nombre, metrics) in enumerate(zip(models_names, metrics_normalized)):
-            fig.add_trace(go.Scatterpolar(
-                r=metrics.tolist() + [metrics[0]],  # Cerrar el polígono
-                theta=categories + [categories[0]],
-                fill='toself',
-                name=nombre,
-                line_color=colors[i]
-            ))
-
-        fig.update_layout(
-            polar=dict(
-                radialaxis=dict(
-                    visible=True,
-                    range=[0, 1]
-                )),
-            showlegend=True,
-            title="Comparación de Rendimiento (Normalizado)"
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Box plots de métricas
-        col1, col2 = st.columns(2)
-
-        with col1:
-            # Distribución de accuracy
-            accuracy_data = [{'Modelo': k, 'Accuracy': v['test_accuracy']} for k, v in successful_models.items()]
-            accuracy_df = pd.DataFrame(accuracy_data)
-
-            fig = px.box(accuracy_df, y='Accuracy', title='Distribución de Accuracy')
-            fig.add_scatter(x=accuracy_df['Modelo'], y=accuracy_df['Accuracy'], mode='markers', name='Modelos')
-            st.plotly_chart(fig, use_container_width=True)
-
-        with col2:
-            # Distribución de F1-Score
-            f1_data = [{'Modelo': k, 'F1-Score': v['test_f1']} for k, v in successful_models.items()]
-            f1_df = pd.DataFrame(f1_data)
-
-            fig = px.box(f1_df, y='F1-Score', title='Distribución de F1-Score')
-            fig.add_scatter(x=f1_df['Modelo'], y=f1_df['F1-Score'], mode='markers', name='Modelos')
-            st.plotly_chart(fig, use_container_width=True)
-
-    with tab3:
-        st.subheader("Análisis de Trade-offs")
-
-        # Scatter plot: Accuracy vs Tiempo
-        col1, col2 = st.columns(2)
-
-        with col1:
-            scatter_data = []
-            for nombre, resultado in successful_models.items():
-                scatter_data.append({
-                    'Modelo': nombre,
-                    'Accuracy': resultado['test_accuracy'],
-                    'Tiempo': resultado['training_time'],
-                    'F1-Score': resultado['test_f1']
-                })
-
-            scatter_df = pd.DataFrame(scatter_data)
-
-            fig = px.scatter(
-                scatter_df,
-                x='Tiempo',
-                y='Accuracy',
-                color='Modelo',
-                size='F1-Score',
-                title='Trade-off: Accuracy vs Tiempo de Entrenamiento',
-                labels={'Tiempo': 'Tiempo de Entrenamiento (s)'}
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        with col2:
-            # F1-Score vs Tiempo
-            fig = px.scatter(
-                scatter_df,
-                x='Tiempo',
-                y='F1-Score',
-                color='Modelo',
-                size='Accuracy',
-                title='Trade-off: F1-Score vs Tiempo de Entrenamiento',
-                labels={'Tiempo': 'Tiempo de Entrenamiento (s)'}
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        # Análisis de eficiencia
-        st.subheader("Análisis de Eficiencia")
-
-        # Calcular eficiencia (rendimiento / tiempo)
-        efficiency_data = []
-        for nombre, resultado in successful_models.items():
-            efficiency = resultado['test_f1'] / resultado['training_time']
-            efficiency_data.append({
-                'Modelo': nombre,
-                'Eficiencia': efficiency,
-                'F1-Score': resultado['test_f1'],
-                'Tiempo': resultado['training_time']
-            })
-
-        efficiency_df = pd.DataFrame(efficiency_data).sort_values('Eficiencia', ascending=False)
-
-        fig = px.bar(
-            efficiency_df,
-            x='Modelo',
-            y='Eficiencia',
-            title='Eficiencia de Modelos (F1-Score / Tiempo)',
-            color='Eficiencia',
-            color_continuous_scale='viridis'
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.dataframe(efficiency_df.round(4), use_container_width=True)
-
-    with tab4:
-        st.subheader("Análisis Detallado por Modelo")
-
-        # Selector de modelo para análisis detallado
-        modelo_seleccionado = st.selectbox(
-            "Selecciona un modelo para análisis detallado:",
-            list(successful_models.keys())
-        )
-
-        if modelo_seleccionado:
-            resultado = successful_models[modelo_seleccionado]
-
-            # Información del modelo seleccionado
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-                st.metric("🎯 Accuracy", f"{resultado['test_accuracy']:.4f}")
-                st.metric("📊 F1-Score", f"{resultado['test_f1']:.4f}")
-
-            with col2:
-                st.metric("⏱️ Tiempo", f"{resultado['training_time']:.2f}s")
-                if resultado['cv_score']:
-                    st.metric("🔄 CV Score", f"{resultado['cv_score']:.4f}")
-
-            with col3:
-                if resultado['best_params']:
-                    st.markdown("**🔧 Mejores Parámetros:**")
-                    for param, value in resultado['best_params'].items():
-                        st.write(f"• {param}: {value}")
-
-            # Matriz de confusión del modelo seleccionado
-            if 'y_pred' in resultado:
-                st.subheader(f"Matriz de Confusión - {modelo_seleccionado}")
-
-                cm = ml_libs['confusion_matrix'](y_test, resultado['y_pred'])
-
-                fig = px.imshow(
-                    cm,
-                    labels=dict(x="Predicción", y="Valor Real", color="Cantidad"),
-                    x=label_encoder.classes_,
-                    y=label_encoder.classes_,
-                    color_continuous_scale='Blues',
-                    text_auto=True,
-                    title=f"Matriz de Confusión - {modelo_seleccionado}"
-                )
-
-                st.plotly_chart(fig, use_container_width=True)
-
-                # Reporte de clasificación
-                class_report = ml_libs['classification_report'](
-                    y_test, resultado['y_pred'],
-                    target_names=label_encoder.classes_,
-                    output_dict=True
-                )
-
-                report_df = pd.DataFrame(class_report).transpose().round(4)
-                st.dataframe(report_df, use_container_width=True)
-
-# Función principal para ejecutar la aplicación
-
-def seccion_seleccion_caracteristicas():
-    ml_libs = get_ml_libs()
-    if ml_libs is None:
-        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
-        if 'ml_libs_error' in st.session_state:
-            st.code(st.session_state['ml_libs_error'])
-        return
-    st.header("📉 Selección de Características")
-
-    if 'X_num_scaled' not in st.session_state:
-        st.warning("⚠️ Primero debes ejecutar el preprocesamiento.")
-        return
-
-    X_num_scaled = st.session_state['X_num_scaled']
-    X_cat_dummies = st.session_state['X_cat_dummies']
-    y_encoded = st.session_state['y_encoded']
-    thresh = st.session_state['thresh']
-
-    st.subheader("Métodos de Selección de Características")
-
-    # Métodos disponibles
-    metodos = st.multiselect(
-        "Selecciona los métodos a aplicar:",
-        ["Chi-cuadrado (Categóricas)", "ANOVA F (Numéricas)", "Random Forest (Embedded)", "RFECV (Wrapper)"],
-        default=["Chi-cuadrado (Categóricas)", "ANOVA F (Numéricas)"]
-    )
-
-    if st.button("🔍 Ejecutar Selección de Características", type="primary"):
-        results = {}
-
-        with st.spinner("Ejecutando selección de características..."):
-
-            # Método 1: Chi-cuadrado para categóricas
-            if "Chi-cuadrado (Categóricas)" in metodos:
-                st.subheader("1️⃣ Chi-cuadrado para Variables Categóricas")
-
-                chi2_scores, _ = ml_libs['chi2'](X_cat_dummies.fillna(0), y_encoded)
-
-                # Agrupar scores por variable original
-                var_of_dummy = X_cat_dummies.columns.to_series().str.split('=', n=1, expand=True)[0]
-                var_importance_cat = (
-                    pd.DataFrame({'var': var_of_dummy, 'score': chi2_scores})
-                    .groupby('var', sort=False)['score']
-                    .sum()
-                    .sort_values(ascending=False)
-                )
-
-                cum_cat = var_importance_cat.cumsum() / var_importance_cat.sum()
-                cat_vars_sel = cum_cat[cum_cat <= thresh].index.tolist()
-                if len(cat_vars_sel) < len(var_importance_cat):
-                    cat_vars_sel = cat_vars_sel + [var_importance_cat.index[len(cat_vars_sel)]]
-
-                results['chi2'] = {
-                    'scores': var_importance_cat,
-                    'selected_vars': cat_vars_sel,
-                    'method': 'Chi-cuadrado'
-                }
-
-                # Visualización
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    fig = px.bar(
-                        x=var_importance_cat.head(10).index,
-                        y=var_importance_cat.head(10).values,
-                        title="Top 10 Variables Categóricas (Chi²)"
-                    )
-                    fig.update_xaxis(tickangle=45)
-                    st.plotly_chart(fig, use_container_width=True)
-
-                with col2:
-                    st.markdown(
-                        f"""
-                        <div class="success-card">
-                            <h4>📊 Resultados Chi²</h4>
-                            <p><strong>Variables disponibles:</strong> {len(var_importance_cat)}</p>
-                            <p><strong>Variables seleccionadas:</strong> {len(cat_vars_sel)}</p>
-                            <p><strong>Umbral:</strong> {thresh:.1%}</p>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-
-            # Método 2: ANOVA F para numéricas
-            if "ANOVA F (Numéricas)" in metodos:
-                st.subheader("2️⃣ ANOVA F para Variables Numéricas")
-
-                F_scores, _ = ml_libs['f_classif'](X_num_scaled, y_encoded)
-                num_importance = pd.Series(F_scores, index=X_num_scaled.columns).sort_values(ascending=False)
-
-                cum_num = num_importance.cumsum() / num_importance.sum()
-                num_vars_sel = cum_num[cum_num <= thresh].index.tolist()
-                if len(num_vars_sel) < len(num_importance):
-                    num_vars_sel = list(num_vars_sel) + [num_importance.index[len(num_vars_sel)]]
-
-                results['anova'] = {
-                    'scores': num_importance,
-                    'selected_vars': num_vars_sel,
-                    'method': 'ANOVA F'
-                }
-
-                # Visualización
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    fig = px.bar(
-                        x=num_importance.head(10).index,
-                        y=num_importance.head(10).values,
-                        title="Top 10 Variables Numéricas (ANOVA F)"
-                    )
-                    fig.update_xaxis(tickangle=45)
-                    st.plotly_chart(fig, use_container_width=True)
-
-                with col2:
-                    st.markdown(
-                        f"""
-                        <div class="success-card">
-                            <h4>📊 Resultados ANOVA F</h4>
-                            <p><strong>Variables disponibles:</strong> {len(num_importance)}</p>
-                            <p><strong>Variables seleccionadas:</strong> {len(num_vars_sel)}</p>
-                            <p><strong>Umbral:</strong> {thresh:.1%}</p>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-
-            # Método 3: Random Forest (Embedded)
-            if "Random Forest (Embedded)" in metodos:
-                st.subheader("3️⃣ Random Forest (Método Embedded)")
-
-                # Combinar datos
-                X_complete = pd.concat([X_num_scaled, X_cat_dummies.fillna(0)], axis=1)
-
-                rf = ml_libs['RandomForestClassifier'](n_estimators=100, random_state=RANDOM_STATE)
-                rf.fit(X_complete, y_encoded)
-
-                importances_rf = rf.feature_importances_
-                indices_rf = np.argsort(importances_rf)[::-1]
-                cumulative_importance_rf = np.cumsum(importances_rf[indices_rf])
-
-                cutoff_rf = np.where(cumulative_importance_rf >= thresh)[0][0] + 1
-                selected_features_rf = X_complete.columns[indices_rf][:cutoff_rf]
-
-                results['random_forest'] = {
-                    'scores': pd.Series(importances_rf, index=X_complete.columns).sort_values(ascending=False),
-                    'selected_vars': selected_features_rf.tolist(),
-                    'method': 'Random Forest'
-                }
-
-                # Visualización
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    top_features = pd.Series(importances_rf, index=X_complete.columns).nlargest(10)
-                    fig = px.bar(
-                        x=top_features.index,
-                        y=top_features.values,
-                        title="Top 10 Características (Random Forest)"
-                    )
-                    fig.update_xaxis(tickangle=45)
-                    st.plotly_chart(fig, use_container_width=True)
-
-                with col2:
-                    st.markdown(
-                        f"""
-                        <div class="success-card">
-                            <h4>📊 Resultados Random Forest</h4>
-                            <p><strong>Variables disponibles:</strong> {X_complete.shape[1]}</p>
-                            <p><strong>Variables seleccionadas:</strong> {cutoff_rf}</p>
-                            <p><strong>Umbral:</strong> {thresh:.1%}</p>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-
-            # Guardar resultados en session_state
-            st.session_state['feature_selection_results'] = results
-
-        st.success("✅ Selección de características completada!")
-
-        # Resumen comparativo
-        if len(results) > 1:
-            st.subheader("📊 Comparación de Métodos")
-
-            comparison_data = []
-            for method, result in results.items():
-                comparison_data.append({
-                    'Método': result['method'],
-                    'Variables Seleccionadas': len(result['selected_vars']),
-                    'Top Variable': result['scores'].index[0] if len(result['scores']) > 0 else 'N/A',
-                    'Score Top Variable': f"{result['scores'].iloc[0]:.4f}" if len(result['scores']) > 0 else 'N/A'
-                })
-
-            comparison_df = pd.DataFrame(comparison_data)
-            st.dataframe(comparison_df, use_container_width=True)
-
-
-
-def seccion_modelado_individual():
-    ml_libs = get_ml_libs()
-    if ml_libs is None:
-        st.error('No se pudieron cargar las librerías de ML. Revisa el requirements o instala scikit-learn/plotly/etc.')
-        if 'ml_libs_error' in st.session_state:
-            st.code(st.session_state['ml_libs_error'])
-        return
-    st.header("🤖 Modelado Individual")
-
-    # Verificar dependencias del pipeline
-    required_keys = ['X_num_scaled', 'X_cat_dummies', 'y_encoded', 'label_encoder']
-    if not all(k in st.session_state for k in required_keys):
-        st.warning("⚠️ Primero ejecuta **Preprocesamiento**.")
-        return
-
-    X_num_scaled = st.session_state['X_num_scaled']
-    X_cat_dummies = st.session_state['X_cat_dummies']
-    y_encoded = st.session_state['y_encoded']
-    label_encoder = st.session_state['label_encoder']
-
-    # Combinar
-    X = pd.concat([X_num_scaled, X_cat_dummies], axis=1)
-    y = y_encoded
-
-    st.subheader("Configuración del Modelo")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        # Selección de características
-        if 'feature_selection_results' in st.session_state and len(st.session_state['feature_selection_results']) > 0:
-            method = st.selectbox("Método de selección de características:",
-                                  list(st.session_state['feature_selection_results'].keys()))
-            top_k = st.slider("Número de características a usar", 5, min(100, X.shape[1]), 20)
-            selected_vars_full = st.session_state['feature_selection_results'][method]['selected_vars']
-            selected_vars = selected_vars_full[:top_k]
-        else:
-            st.info("ℹ️ Aún no hay selección de características. Se usarán todas las variables.")
-            method = None
-            selected_vars = X.columns.tolist()
-
-        # División de datos
-        test_size = st.slider("Tamaño del conjunto de prueba (%)", 10, 40, 25) / 100.0
-        cv_folds = st.slider("Número de folds para CV", 3, 10, 5)
-
-    with col2:
-        # Selección de modelo
-        modelos = {
-            "LogisticRegression": ml_libs['LogisticRegression'](max_iter=1000),
-            "RandomForestClassifier": ml_libs['RandomForestClassifier'](n_estimators=200, random_state=42),
-            "ExtraTreesClassifier": ml_libs['ExtraTreesClassifier'](n_estimators=300, random_state=42),
-            "HistGradientBoostingClassifier": ml_libs['HistGradientBoostingClassifier'](random_state=42),
-            "SVC": ml_libs['SVC'](probability=True, random_state=42)
-        }
-        modelo_name = st.selectbox("Modelo:", list(modelos.keys()))
-        modelo = modelos[modelo_name]
-
-    if st.button("🏃‍♂️ Entrenar modelo", type="primary"):
-        with st.spinner("Entrenando..."):
-            # Subconjunto de variables
-            X_use = X[selected_vars].copy()
-
-            X_train, X_test, y_train, y_test = ml_libs['train_test_split'](
-                X_use, y, test_size=test_size, random_state=42, stratify=y
-            )
-
-            modelo.fit(X_train, y_train)
-            y_pred = modelo.predict(X_test)
-            if hasattr(modelo, "predict_proba"):
-                y_prob = modelo.predict_proba(X_test)
-            else:
-                # Fallback para modelos sin predict_proba
-                try:
-                    # decision_function → prob aprox vía softmax/normalización
-                    dec = modelo.decision_function(X_test)
-                    if dec.ndim == 1:
-                        # binario
-                        dec = np.vstack([-dec, dec]).T
-                    expd = np.exp(dec - np.max(dec, axis=1, keepdims=True))
-                    y_prob = expd / expd.sum(axis=1, keepdims=True)
-                except Exception:
-                    y_prob = None
-
-        st.success("✅ Entrenamiento completado")
-
-        # Métricas
-        st.subheader("Resultados")
-        report = ml_libs['classification_report'](y_test, y_pred, output_dict=True,
-                                                  target_names=label_encoder.classes_)
-        st.dataframe(pd.DataFrame(report).transpose().round(4), use_container_width=True)
-
-        # Matriz de confusión
-        cm = ml_libs['confusion_matrix'](y_test, y_pred)
-        k, fig_cm = _plot_confusion_matrix(cm, label_encoder.classes_)
-        if k == 'mpl':
-            st.pyplot(fig_cm, use_container_width=True)
-        else:
-            st.plotly_chart(fig_cm, use_container_width=True)
-        # ROC/AUC si hay probabilidades
-        if y_prob is not None:
-            try:
-                y_test_bin = pd.get_dummies(y_test)
-                fprs, tprs, aucs = [], [], []
-                for i, cls in enumerate(y_test_bin.columns):
-                    fpr, tpr, _ = ml_libs['roc_curve'](y_test_bin.iloc[:, i], y_prob[:, i])
-                    auc_val = ml_libs['auc'](fpr, tpr)
-                    fprs.append(fpr); tprs.append(tpr); aucs.append(auc_val)
-                fig2 = go.Figure()
-                for i, cls in enumerate(y_test_bin.columns):
-                    fig2.add_trace(go.Scatter(x=fprs[i], y=tprs[i], mode="lines",
-                                              name=f"Clase {label_encoder.classes_[i]} (AUC={aucs[i]:.3f})"))
-                fig2.update_layout(title="Curvas ROC (One-vs-Rest)", xaxis_title="FPR", yaxis_title="TPR")
-                st.plotly_chart(fig2, use_container_width=True)
-            except Exception as e:
-                st.info(f"No se pudo calcular ROC/AUC: {e}")
-
+            st.warning("Este modelo no expone probabilidades.")
+
+def section_help():
+    st.header("❓ Ayuda")
+    st.markdown("""
+**¿Qué hace esta app?**
+- Carga datos (UCI o CSV) y explora el dataset.
+- Preprocesa: limpieza, imputación, codificación, escalado.
+- Hace **PCA exploratorio** para entender la estructura de los datos.
+- Selecciona características (Chi², ANOVA, Random Forest embedded).
+- Entrena un **modelo individual** con métricas, ROC y matriz de confusión.
+- Permite **comparar varios modelos** en el mismo split y ver sus detalles.
+
+**Consejos**
+- Si tu objetivo es binario, la curva ROC y AUC serán más claras.
+- En datos desbalanceados, prueba `Class Weight Balanced` o `SMOTE`.
+- No todos los modelos exponen `predict_proba`; en esos casos no habrá ROC.
+- Mantén el número de variables razonable para evitar sobreajuste.
+
+**Requisitos**
+- `scikit-learn`, `plotly`, `pandas`, `numpy`, `streamlit`.
+- Opcional: `imbalanced-learn` para SMOTE y `ucimlrepo` para bajar el dataset UCI.
+    """)
+
+# ======== MAIN APP NAV ========
+def main():
+    st.title("🩺 Análisis de Diabetes - ML Pipeline")
+    with st.sidebar:
+        st.header("Navegación")
+        page = st.radio("Ir a:", [
+            "Carga y Exploración",
+            "Preprocesamiento",
+            "PCA Exploratorio",
+            "Selección de Características",
+            "Modelado Individual",
+            "Comparar Modelos",
+            "Ayuda"
+        ])
+        st.markdown("---")
+        st.caption("v1.0 • Demo educativa")
+
+    if page == "Carga y Exploración":
+        section_data_loading()
+    elif page == "Preprocesamiento":
+        section_preprocessing()
+    elif page == "PCA Exploratorio":
+        section_pca_exploratory()
+    elif page == "Selección de Características":
+        section_feature_selection()
+    elif page == "Modelado Individual":
+        section_individual_modeling()
+    elif page == "Comparar Modelos":
+        section_model_comparison()
+    else:
+        section_help()
+
+if __name__ == "__main__":
+    main()
