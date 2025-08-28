@@ -10,10 +10,35 @@ Original file is located at
 import streamlit as st
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+try:
+    import matplotlib.pyplot as plt
+    MPL_AVAILABLE = True
+except Exception:
+    plt = None
+    MPL_AVAILABLE = False
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+
+def _plot_confusion_matrix(cm, labels):
+    """Plot confusion matrix using matplotlib if available, else Plotly heatmap."""
+    if 'MPL_AVAILABLE' in globals() and MPL_AVAILABLE and plt is not None:
+        from sklearn.metrics import ConfusionMatrixDisplay
+        fig, ax = plt.subplots()
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=labels)
+        disp.plot(ax=ax, cmap="Blues", colorbar=False)
+        return ("mpl", fig)
+    else:
+        # Plotly fallback
+        fig = go.Figure(data=go.Heatmap(
+            z=cm,
+            x=labels,
+            y=labels,
+            zauto=True,
+            zmin=0
+        ))
+        fig.update_layout(title="Matriz de Confusión", xaxis_title="Predicción", yaxis_title="Real")
+        return ("plotly", fig)
 import time
 from collections import Counter
 
@@ -1817,12 +1842,11 @@ def seccion_modelado_individual():
 
         # Matriz de confusión
         cm = ml_libs['confusion_matrix'](y_test, y_pred)
-        disp = ml_libs['ConfusionMatrixDisplay'](confusion_matrix=cm,
-                                                 display_labels=label_encoder.classes_)
-        fig, ax = plt.subplots()
-        disp.plot(ax=ax, cmap="Blues", colorbar=False)
-        st.pyplot(fig, use_container_width=True)
-
+        k, fig_cm = _plot_confusion_matrix(cm, label_encoder.classes_)
+        if k == 'mpl':
+            st.pyplot(fig_cm, use_container_width=True)
+        else:
+            st.plotly_chart(fig_cm, use_container_width=True)
         # ROC/AUC si hay probabilidades
         if y_prob is not None:
             try:
