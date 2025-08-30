@@ -9,72 +9,121 @@ Original file is located at
 
 # -*- coding: utf-8 -*-
 # =============================================================================
-# App Streamlit — Pipeline sin fugas (EDA + preparación)
-# Carga desde UCI (ucimlrepo), limpieza segura, binarización de y y EDA visual.
+# Streamlit — EDA + Entrenamiento Ruta B (sin fugas)
+# - Carga UCI (ucimlrepo)
+# - Limpieza segura + EDA + split temprano
+# - PRE básico → (opcional) Densify → SMOTE → SelectFromModel → Adaptive SVD → Clasificador
+# - Búsqueda aleatoria + reportes + ROC + resumen comparativo
 # =============================================================================
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib
 import streamlit as st
-
-from ucimlrepo import fetch_ucirepo
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
 
 from collections import Counter
 
-# -------------------------------
-# Configuración de la página
-# -------------------------------
+# UCI
+from ucimlrepo import fetch_ucirepo
+
+# Split & encoding
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler, label_binarize
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
+
+# Pipelines
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.pipeline import Pipeline
+
+# Reducción (MCA-like)
+from sklearn.decomposition import TruncatedSVD
+
+# Selección
+from sklearn.feature_selection import SelectFromModel
+
+# Métricas
+from sklearn.metrics import (
+    classification_report, confusion_matrix, ConfusionMatrixDisplay,
+    roc_curve, RocCurveDisplay, auc
+)
+
+# Modelos
+from sklearn.ensemble import (
+    RandomForestClassifier, GradientBoostingClassifier,
+    HistGradientBoostingClassifier, ExtraTreesClassifier
+)
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+
+# Búsqueda
+from scipy.stats import randint, uniform
+
+# Imbalanced-learn
+from imblearn.pipeline import Pipeline as ImbPipeline
+from imblearn.over_sampling import SMOTE  # podrías cambiar a ADASYN si lo prefieres
+
+# -----------------------------------------------------------------------------
+# Config página
+# -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Diabetes — EDA y Preparación (Sin Fugas)",
+    page_title="Diabetes — EDA + Entrenamiento (Ruta B, sin fugas)",
     page_icon="🩺",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title("🩺 Análisis de Diabetes — EDA y Preparación (Sin Fugas)")
-st.caption("Carga directa desde UCI, limpieza básica segura, binarización de y (= 'NO' vs 'SI'), EDA y split temprano.")
+st.title("🩺 Diabetes — EDA + Entrenamiento (Ruta B, sin fugas)")
+st.caption("PRE seguro → Split temprano → Entrenamiento con selección supervisada y SVD adaptativo dentro de CV, sin fugas.")
 
-# -------------------------------
-# Parámetros
-# -------------------------------
+# -----------------------------------------------------------------------------
+# Parámetros globales
+# -----------------------------------------------------------------------------
 with st.sidebar:
-    st.header("⚙️ Parámetros")
+    st.header("⚙️ Parámetros generales")
     RANDOM_STATE = st.number_input("Random state", min_value=0, value=42, step=1)
-    N_SAMPLE = st.number_input("Muestreo opcional (0 = sin muestreo)", min_value=0, value=5000, step=500,
-                               help="Si el dataset es muy grande, toma una muestra aleatoria para pruebas.")
+    np.random.seed(RANDOM_STATE)
+    N_SAMPLE = st.number_input("Muestreo opcional (0 = sin muestreo)", min_value=0, value=5000, step=500)
+
+    st.markdown("---")
+    st.subheader("Entrenamiento")
+    enable_training = st.checkbox("Habilitar entrenamiento (Ruta B)", value=True)
+    test_size = st.slider("Proporción de test", 0.10, 0.40, 0.25, 0.05)
+    n_iter = st.slider("RandomizedSearchCV — n_iter", 1, 30, 5, 1)
+    cv_splits = st.slider("CV folds", 2, 10, 3, 1)
+    use_rebalance = st.checkbox("Usar SMOTE (requiere densificar)", value=False,
+                                help="SMOTE no acepta sparse matrices. Activarlo convierte la matriz a densa (cuidado memoria).")
+    densify_warn = st.checkbox("Confirmo que entiendo el costo de memoria al densificar", value=False) if use_rebalance else False
+
+    st.markdown("---")
     show_raw_preview = st.checkbox("Ver muestra de datos crudos", value=False)
     show_numeric_hists = st.checkbox("Graficar histogramas numéricos", value=True)
     limit_cats = st.number_input("Máx. categorías a graficar por variable", min_value=5, value=30, step=5)
-    st.divider()
-    st.markdown("**Nota:** Todo el aprendizaje debe ir dentro de CV; aquí solo hacemos limpieza segura + EDA + split temprano.")
 
-# -------------------------------
-# 1) Cargar datos (X, y)
-# -------------------------------
+# -----------------------------------------------------------------------------
+# Carga datos UCI
+# -----------------------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def load_data(id_ucirepo: int = 296):
-    ds = fetch_ucirepo(id=id_ucirepo)  # Diabetes 130-US hospitals (UCI id=296)
+    ds = fetch_ucirepo(id=id_ucirepo)  # Diabetes 130-US hospitals
     X = ds.data.features.copy()
     y = ds.data.targets.copy().iloc[:, 0].astype(str)
     return X, y
 
 X, y = load_data()
-
 st.subheader("📥 Carga de datos")
 st.write(f"**Formas:** X = `{X.shape}` | y = `{y.shape}`")
 if show_raw_preview:
-    st.write("**Vista previa (X):**")
     st.dataframe(X.head(), use_container_width=True)
-    st.write("**Vista previa (y):**")
-    st.write(y.head())
+    st.write("y (head):", y.head())
 
-# -------------------------------
-# EDA: análisis de categóricas y faltantes (antes de limpiar)
-# -------------------------------
-st.subheader("🔎 EDA — Variables categóricas y valores faltantes")
+# -----------------------------------------------------------------------------
+# EDA inicial (antes de limpieza)
+# -----------------------------------------------------------------------------
+st.subheader("🔎 EDA — Categóricas y faltantes")
 cat_cols_eda = X.select_dtypes(exclude=np.number).columns.tolist()
 
 with st.expander("Número de clases únicas por variable categórica"):
@@ -87,7 +136,6 @@ with st.expander("Número de clases únicas por variable categórica"):
 
 missing_data = X.isnull().sum()
 missing_data = missing_data[missing_data > 0].sort_values(ascending=False)
-
 with st.expander("Valores faltantes por columna"):
     if not missing_data.empty:
         total_rows = len(X)
@@ -109,11 +157,10 @@ with st.expander("Valores faltantes por columna"):
     else:
         st.success("No hay valores faltantes en X.")
 
-# -------------------------------
-# Limpieza segura: quitar IDs, códigos y variables de alta fuga
-# -------------------------------
+# -----------------------------------------------------------------------------
+# Limpieza segura (quitar IDs/códigos/fugas)
+# -----------------------------------------------------------------------------
 st.subheader("🧹 Limpieza (solo lo 'seguro')")
-
 default_drop = [
     "encounter_id","patient_nbr","encounterid","patientnbr",
     "diag_1","diag_2","diag_3","payer_code","medical_specialty",
@@ -125,26 +172,402 @@ to_drop = st.multiselect(
     options=sorted(X.columns.tolist()),
     default=drop_candidates
 )
-
 X = X.drop(columns=to_drop, errors="ignore")
 st.write(f"**X (post limpieza segura):** `{X.shape}`")
 
-# -------------------------------
-# Muestreo opcional para acelerar
-# -------------------------------
+# Muestreo opcional
 if N_SAMPLE and len(X) > N_SAMPLE:
-    st.info(f"Aplicando muestreo aleatorio sin reemplazo de **{N_SAMPLE}** filas (de {len(X)}).")
+    st.info(f"Muestreo aleatorio de **{N_SAMPLE}** filas (de {len(X)}).")
     rng = np.random.RandomState(RANDOM_STATE)
     idx = rng.choice(X.index, size=N_SAMPLE, replace=False)
     X = X.loc[idx].reset_index(drop=True)
     y = y.loc[idx].reset_index(drop=True)
 
-# -------------------------------
 # Tipos de columna
-# -------------------------------
 num_cols = X.select_dtypes(include=np.number).columns.tolist()
 cat_cols = X.select_dtypes(exclude=np.number).columns.tolist()
 
 col1, col2 = st.columns(2)
 with col1:
     st.metric("Variables numéricas", len(num_cols))
+with col2:
+    st.metric("Variables categóricas", len(cat_cols))
+
+# -----------------------------------------------------------------------------
+# y multiclase + y binaria (NO vs SI)
+# -----------------------------------------------------------------------------
+st.subheader("🎯 Variable objetivo (original y binaria)")
+
+le_multi = LabelEncoder().fit(y)
+y_enc_multi = le_multi.transform(y)
+class_names_multi = le_multi.classes_
+
+colA, colB = st.columns(2)
+with colA:
+    st.write("**Clases (multiclase):**", list(class_names_multi))
+with colB:
+    counts_multi = dict(Counter(y))
+    st.write("**Distribución (multiclase):**")
+    st.write(counts_multi)
+
+def to_binary_label(val: str):
+    return "NO" if val == "NO" else "SI"
+
+y_bin = y.apply(to_binary_label)
+le_bin = LabelEncoder().fit(y_bin)
+y_enc = le_bin.transform(y_bin)
+class_names_bin = le_bin.classes_
+
+colC, colD = st.columns(2)
+with colC:
+    st.write("**Clases (binaria):**", list(class_names_bin))
+with colD:
+    counts_bin = dict(Counter(y_bin))
+    st.write("**Distribución (binaria):**")
+    st.write(counts_bin)
+
+st.caption("Conversión binaria: cualquier categoría ≠ 'NO' → 'SI'.")
+
+# -----------------------------------------------------------------------------
+# Split temprano (sin fugas)
+# -----------------------------------------------------------------------------
+st.subheader("🔀 Split temprano (train/test)")
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y_enc, test_size=test_size, stratify=y_enc, random_state=RANDOM_STATE
+)
+st.write(f"**Train:** {X_train.shape} | **Test:** {X_test.shape}")
+st.write("**Distribución y_train (binaria codificada):**", dict(Counter(y_train)))
+
+# -----------------------------------------------------------------------------
+# EDA de entrenamiento
+# -----------------------------------------------------------------------------
+st.subheader("📊 EDA de entrenamiento (X_train)")
+with st.expander("Resumen estadístico (numéricas)"):
+    if num_cols:
+        st.dataframe(X_train[num_cols].describe().T, use_container_width=True)
+    else:
+        st.info("No hay variables numéricas.")
+
+with st.expander("Conteo de valores únicos por columna (X_train)"):
+    uniques = {col: int(X_train[col].nunique()) for col in X_train.columns}
+    st.dataframe(pd.DataFrame.from_dict(uniques, orient="index", columns=["Valores únicos"])
+                 .sort_values("Valores únicos", ascending=False),
+                 use_container_width=True)
+
+st.markdown("**Distribución de clases (y_train)**")
+fig1, ax1 = plt.subplots(figsize=(5, 3))
+labels = list(le_bin.inverse_transform(sorted(np.unique(y_train))))
+values = [int((y_train == le_bin.transform([lab])[0]).sum()) for lab in labels]
+ax1.bar(labels, values)
+ax1.set_title("Distribución de Clases en y_train")
+ax1.set_xlabel("Clase"); ax1.set_ylabel("Frecuencia")
+st.pyplot(fig1)
+
+if show_numeric_hists and num_cols:
+    st.markdown("**Histogramas de variables numéricas (X_train)**")
+    selected_num = st.multiselect("Selecciona variables numéricas a graficar", num_cols, default=num_cols[:min(6, len(num_cols))])
+    for col in selected_num:
+        fig, ax = plt.subplots(figsize=(5, 3))
+        X_train[col].hist(bins=20, ax=ax)
+        ax.set_title(f"Distribución — {col}")
+        ax.set_xlabel(col); ax.set_ylabel("Frecuencia")
+        st.pyplot(fig)
+
+if cat_cols:
+    st.markdown("**Distribuciones de variables categóricas (X_train)**")
+    selected_cat = st.selectbox("Elige una variable categórica para ver su conteo", cat_cols)
+    top_k = st.slider("Máximo de categorías a mostrar", 5, 100, min(30, limit_cats), 5)
+    vc = X_train[selected_cat].value_counts().head(top_k)
+    fig2, ax2 = plt.subplots(figsize=(7, 3.8))
+    vc.plot(kind="bar", ax=ax2)
+    ax2.set_title(f"Distribución — {selected_cat} (Top {top_k})")
+    ax2.set_xlabel(selected_cat); ax2.set_ylabel("Frecuencia")
+    plt.xticks(rotation=45, ha="right")
+    st.pyplot(fig2)
+
+# =============================================================================
+# ENTRENAMIENTO — RUTA B
+# =============================================================================
+st.header("🏁 Entrenamiento (Ruta B — sin fugas)")
+
+# ---------- Adaptive TruncatedSVD (MCA-like) ----------
+class AdaptiveTruncatedSVD(BaseEstimator, TransformerMixin):
+    """
+    Ajusta n_components para alcanzar varianza explicada acumulada >= target_variance.
+    Ideal para matrices dispersas (tras OneHot). Sustituye PCA/MCA cuando ya mezclaste num+OHE.
+    """
+    def __init__(self, target_variance=0.90, max_components=300, random_state=42):
+        self.target_variance = target_variance
+        self.max_components = max_components
+        self.random_state = random_state
+        self.n_components_ = None
+        self.svd_ = None
+        self.explained_variance_ratio_ = None
+        self.cumulative_variance_ = None
+
+    def fit(self, X, y=None):
+        n_features = X.shape[1]
+        max_allow = max(2, min(self.max_components, n_features - 1))
+        svd_probe = TruncatedSVD(n_components=max_allow, random_state=self.random_state)
+        svd_probe.fit(X)
+
+        cum = np.cumsum(svd_probe.explained_variance_ratio_)
+        self.cumulative_variance_ = cum
+        k_candidates = np.where(cum >= self.target_variance)[0]
+        k = int(k_candidates[0] + 1) if len(k_candidates) else max_allow
+        self.n_components_ = k
+
+        self.svd_ = TruncatedSVD(n_components=k, random_state=self.random_state)
+        self.svd_.fit(X)
+        self.explained_variance_ratio_ = self.svd_.explained_variance_ratio_
+        return self
+
+    def transform(self, X):
+        return self.svd_.transform(X)
+
+    def get_feature_names_out(self, input_features=None):
+        return np.array([f"svd_{i+1}" for i in range(self.n_components_)])
+
+# ---------- Utilidad: OneHotEncoder compatible 1.2/1.3 ----------
+def make_ohe():
+    try:
+        return OneHotEncoder(handle_unknown="ignore", sparse_output=True)
+    except TypeError:
+        return OneHotEncoder(handle_unknown="ignore", sparse=True)
+
+# ---------- Preprocesadores ----------
+num_pre = Pipeline([
+    ("imp", SimpleImputer(strategy="median")),
+    ("sc", StandardScaler(with_mean=True))
+])
+
+cat_pre = Pipeline([
+    ("imp", SimpleImputer(strategy="most_frequent")),
+    ("oh", make_ohe())
+])
+
+pre_basic = ColumnTransformer(
+    transformers=[
+        ("num", num_pre, num_cols),
+        ("cat", cat_pre, cat_cols),
+    ],
+    sparse_threshold=1.0   # conserva sparse si OHE lo genera
+)
+
+# ---------- Densificador para SMOTE (opcional) ----------
+class Densify(BaseEstimator, TransformerMixin):
+    """Convierte matrices sparse a dense (np.ndarray). Úsalo antes de SMOTE."""
+    def fit(self, X, y=None): return self
+    def transform(self, X):
+        if hasattr(X, "toarray"):
+            return X.toarray()
+        return X
+
+# ---------- Selección supervisada ----------
+selector = SelectFromModel(
+    estimator=ExtraTreesClassifier(n_estimators=300, random_state=RANDOM_STATE, n_jobs=-1),
+    threshold="median"
+)
+
+# ---------- Reducción (≥90% var) ----------
+reduce_sel = AdaptiveTruncatedSVD(target_variance=0.90, max_components=300, random_state=RANDOM_STATE)
+
+# ---------- Modelos ----------
+models = {
+    "RandomForest": RandomForestClassifier(random_state=RANDOM_STATE),
+    "GradientBoosting": GradientBoostingClassifier(random_state=RANDOM_STATE),
+    "HistGradientBoosting": HistGradientBoostingClassifier(random_state=RANDOM_STATE),
+    "ExtraTrees": ExtraTreesClassifier(random_state=RANDOM_STATE),
+    "KNN": KNeighborsClassifier(),
+    "DecisionTree": DecisionTreeClassifier(random_state=RANDOM_STATE),
+    "SVM_Linear": SVC(kernel='linear', probability=True, max_iter=2000, random_state=RANDOM_STATE),
+    "LogisticRegression": LogisticRegression(max_iter=2000, random_state=RANDOM_STATE, solver="liblinear"),
+}
+
+# ---------- Grillas ----------
+param_grids = {
+    "RandomForest": {
+        'classifier__n_estimators': randint(50, 200),
+        'classifier__max_depth': randint(5, 30),
+        'classifier__min_samples_split': randint(2, 20),
+        'classifier__min_samples_leaf': randint(1, 20),
+        'classifier__max_features': [None, 'sqrt', 'log2'],
+        'classifier__bootstrap': [True, False]
+    },
+    "GradientBoosting": {
+        'classifier__n_estimators': randint(50, 200),
+        'classifier__learning_rate': [0.01, 0.05, 0.1, 0.2],
+        'classifier__max_depth': randint(2, 10),
+        'classifier__min_samples_split': randint(2, 20),
+        'classifier__min_samples_leaf': randint(1, 20)
+    },
+    "HistGradientBoosting": {
+        'classifier__max_iter': randint(50, 200),
+        'classifier__learning_rate': [0.01, 0.05, 0.1, 0.2],
+        'classifier__max_depth': randint(2, 10),
+        'classifier__max_leaf_nodes': randint(10, 50)
+    },
+    "ExtraTrees": {
+        'classifier__n_estimators': randint(50, 200),
+        'classifier__max_depth': randint(5, 30),
+        'classifier__min_samples_split': randint(2, 20),
+        'classifier__min_samples_leaf': randint(1, 20),
+        'classifier__max_features': ['sqrt', 'log2', None],
+        'classifier__bootstrap': [True, False]
+    },
+    "KNN": {
+        'classifier__n_neighbors': randint(3, 30),
+        'classifier__weights': ['uniform', 'distance'],
+        'classifier__metric': ['euclidean', 'manhattan', 'minkowski'],
+        'classifier__p': [1, 2]
+    },
+    "DecisionTree": {
+        'classifier__criterion': ['gini', 'entropy'],
+        'classifier__max_depth': randint(3, 30),
+        'classifier__min_samples_split': randint(2, 20),
+        'classifier__min_samples_leaf': randint(1, 20),
+        'classifier__ccp_alpha': uniform(0.0, 0.02)
+    },
+    "LogisticRegression": {
+        "classifier__C": [0.1, 1, 10],
+        "classifier__penalty": ["l1", "l2"],
+        "classifier__solver": ["liblinear", "saga"],
+        "classifier__class_weight": [None, "balanced"],
+    },
+    "SVM_Linear": {
+        "classifier__C": [0.1, 1, 10],
+        "classifier__class_weight": [None, "balanced"],
+    },
+}
+
+# ---------- Entrenamiento ----------
+results = {}
+
+if enable_training:
+    if use_rebalance and not densify_warn:
+        st.warning("Activa la casilla de confirmación para densificar antes de SMOTE (puede consumir mucha memoria).")
+    else:
+        for name, model in models.items():
+            st.markdown(f"\n### 🔧 Entrenando: **{name}**")
+            with st.spinner(f"Entrenando {name}..."):
+                # Construir pipeline según rebalanceo
+                steps = [('pre_basic', pre_basic)]
+                if use_rebalance:
+                    steps += [
+                        ('densify', Densify()),
+                        ('sampler', SMOTE(random_state=RANDOM_STATE)),
+                    ]
+                steps += [
+                    ('selector', selector),
+                    ('reduce', reduce_sel),
+                    ('classifier', model)
+                ]
+
+                pipeB = ImbPipeline(steps=steps)
+
+                random_search = RandomizedSearchCV(
+                    pipeB,
+                    param_distributions=param_grids[name],
+                    n_iter=n_iter, cv=cv_splits, verbose=1, n_jobs=-1, random_state=RANDOM_STATE
+                )
+
+                random_search.fit(X_train, y_train)
+                y_pred = random_search.predict(X_test)
+
+                # Reporte
+                report_dict = classification_report(y_test, y_pred, output_dict=True)
+                results[name] = {
+                    "best_params": random_search.best_params_,
+                    "classification_report": report_dict,
+                    "cv_results": pd.DataFrame(random_search.cv_results_)[['params', 'mean_test_score', 'std_test_score']]
+                }
+
+                st.write("**Mejores hiperparámetros:**")
+                st.json(random_search.best_params_)
+
+                # Matriz de confusión
+                cm = confusion_matrix(y_test, y_pred)
+                fig_cm, ax_cm = plt.subplots(figsize=(5.5, 4.5))
+                ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=le_bin.classes_).plot(
+                    cmap="Blues", values_format='d', ax=ax_cm, colorbar=False
+                )
+                ax_cm.set_title(f"Matriz de Confusión — {name}")
+                st.pyplot(fig_cm)
+
+                # ROC
+                if hasattr(random_search.best_estimator_.named_steps['classifier'], "predict_proba"):
+                    y_score = random_search.predict_proba(X_test)
+                    classes = np.unique(y_test)
+
+                    if len(classes) > 2:
+                        y_b = label_binarize(y_test, classes=classes)
+                        fig_roc, ax_roc = plt.subplots(figsize=(7, 6))
+                        fpr, tpr, roc_auc = {}, {}, {}
+                        colors = matplotlib.colormaps['Set2'].resampled(len(classes))
+                        for i, color in zip(range(len(classes)), colors.colors):
+                            fpr[i], tpr[i], _ = roc_curve(y_b[:, i], y_score[:, i])
+                            roc_auc[i] = auc(fpr[i], tpr[i])
+                            ax_roc.plot(fpr[i], tpr[i], color=color, lw=1.5, alpha=0.8,
+                                        label=f"Clase {classes[i]} (AUC={roc_auc[i]:.2f})")
+                        # Micro
+                        fpr["micro"], tpr["micro"], _ = roc_curve(y_b.ravel(), y_score.ravel())
+                        roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+                        ax_roc.plot(fpr["micro"], tpr["micro"], label=f"Micro (AUC={roc_auc['micro']:.2f})",
+                                    linestyle=":", linewidth=2)
+                        # Macro
+                        all_fpr = np.unique(np.concatenate([fpr[i] for i in range(len(classes))]))
+                        mean_tpr = np.zeros_like(all_fpr)
+                        for i in range(len(classes)):
+                            mean_tpr += np.interp(all_fpr, fpr[i], tpr[i])
+                        mean_tpr /= len(classes)
+                        roc_auc["macro"] = auc(all_fpr, mean_tpr)
+                        ax_roc.plot(all_fpr, mean_tpr, label=f"Macro (AUC={roc_auc['macro']:.2f})",
+                                    linestyle="--", linewidth=2)
+                        ax_roc.plot([0, 1], [0, 1], "k--", lw=1)
+                        ax_roc.set_title(f"Curva ROC Multiclase — {name}")
+                        ax_roc.set_xlabel("False Positive Rate"); ax_roc.set_ylabel("True Positive Rate")
+                        ax_roc.legend(loc="lower right"); ax_roc.set_xlim([0, 1]); ax_roc.set_ylim([0, 1.05])
+                        ax_roc.grid(True, linestyle='--', alpha=0.5)
+                        st.pyplot(fig_roc)
+                    else:
+                        fpr, tpr, _ = roc_curve(y_test, y_score[:, 1])
+                        fig_r, ax_r = plt.subplots(figsize=(6, 5))
+                        RocCurveDisplay(fpr=fpr, tpr=tpr, roc_auc=auc(fpr, tpr)).plot(ax=ax_r)
+                        ax_r.set_title(f"Curva ROC Binaria — {name}")
+                        st.pyplot(fig_r)
+
+# ---------- Resumen comparativo ----------
+st.subheader("📈 Resumen comparativo (F1 ponderado y por clase)")
+if results:
+    summary = []
+    for name, res in results.items():
+        report = res["classification_report"]
+        row = {"Model": name}
+
+        # OJO: y en esta app es binaria (le_bin). Extraemos por clase "0" y "1" del report (si existen).
+        # Para mostrar por etiquetas humanas ("NO"/"SI"), mapeamos los índices.
+        inv_map = {i: lab for i, lab in enumerate(le_bin.classes_)}  # 0->NO, 1->SI (en general)
+        for i in [0, 1]:
+            key = str(i)
+            human = inv_map[i]
+            if key in report:
+                row[f"F1_{human}"] = report[key]["f1-score"]
+            else:
+                row[f"F1_{human}"] = np.nan
+
+        row["F1_weighted"] = report.get("weighted avg", {}).get("f1-score", np.nan)
+        summary.append(row)
+
+    summary_df = pd.DataFrame(summary).set_index("Model")
+    st.dataframe(summary_df.sort_values(by="F1_weighted", ascending=False), use_container_width=True)
+
+st.divider()
+st.markdown(
+    """
+**Notas:**
+- El balanceo con **SMOTE** requiere **densificar** (se activa con el *toggle*). En datasets grandes puede agotar memoria.
+- Si necesitas balanceo que opere directamente sobre categóricas, conviene **SMOTENC** pero requiere pasar índices de columnas categóricas **antes** de OHE.
+- La reducción usa `AdaptiveTruncatedSVD` (MCA-like) con objetivo de ≥90% varianza explicada sobre las *features* ya seleccionadas.
+- Todo el aprendizaje (selector, reducción, modelo) sucede dentro de CV → **sin fugas**.
+"""
+)
