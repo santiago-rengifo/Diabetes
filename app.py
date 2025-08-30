@@ -610,7 +610,7 @@ def main() -> None:
                     "Clases únicas": list(cat_counts.values()),
                 }
             ).sort_values("Clases únicas", ascending=False)
-            st.dataframe(cat_df, hide_index=True)
+            st.dataframe(cat_df, hide_index=True, width="stretch")
 
         # Missing values analysis
         st.subheader("Valores faltantes")
@@ -624,7 +624,7 @@ def main() -> None:
                     "Porcentaje (%)": (missing.values / len(X)) * 100,
                 }
             )
-            st.dataframe(missing_df, hide_index=True)
+            st.dataframe(missing_df, hide_index=True, width="stretch")
         else:
             st.write("No se encontraron valores faltantes en el conjunto de datos.")
 
@@ -690,6 +690,23 @@ def main() -> None:
         model_options = list(get_models().keys())
         model_name = st.selectbox("Clasificador", model_options)
 
+        # Classification type: multiclass or binary
+        classification_type = st.radio(
+            "Tipo de clasificación",
+            options=["Multiclase", "Biclase"],
+            index=0,
+            help="Seleccione cómo tratar la variable objetivo: como problema multiclase o agrupar varias clases en una categoría positiva.",
+        )
+        # If biclase, choose which labels will be grouped as positive
+        positive_selection: List[str] = []
+        if classification_type == "Biclase":
+            positive_selection = st.multiselect(
+                "Seleccione clases para agrupar como Positivo",
+                options=class_names,
+                default=(class_names[1:] if len(class_names) > 1 else class_names),
+                help="Las clases seleccionadas se etiquetarán como positivas; las restantes como negativas."
+            )
+
         # Hyperparameter search settings
         n_iter = st.slider(
             "Número de configuraciones a probar (RandomizedSearchCV)",
@@ -702,16 +719,33 @@ def main() -> None:
         cv_folds = st.slider(
             "Número de particiones de validación cruzada", min_value=2, max_value=5, value=3, step=1
         )
+
         # Trigger training
         if st.button("Entrenar modelo"):
             with st.spinner("Entrenando el modelo, por favor espere..."):
                 try:
+                    # Decide label encoding according to classification type
+                    if classification_type == "Biclase":
+                        if not positive_selection:
+                            st.error("Debe seleccionar al menos una clase para agrupar como Positivo.")
+                            return
+                        # Map classes to Positivo/Negativo strings
+                        y_binary = y.apply(lambda x: "Positivo" if x in positive_selection else "Negativo")
+                        le_local = LabelEncoder().fit(y_binary)
+                        y_enc_full = le_local.transform(y_binary)
+                        class_names_local = le_local.classes_.tolist()
+                    else:
+                        # Keep original multiclass encoding
+                        le_local = LabelEncoder().fit(y)
+                        y_enc_full = le_local.transform(y)
+                        class_names_local = le_local.classes_.tolist()
+
                     preprocessor = build_preprocessor(num_cols, cat_cols)
                     pipeline = build_pipeline(model_name, preprocessor)
                     param_grid = get_param_distributions(model_name)
-                    # Perform train/test split
+                    # Perform train/test split using the selected encoding
                     X_train, X_test, y_train_enc, y_test_enc = train_test_split(
-                        X, y_enc, test_size=0.25, stratify=y_enc, random_state=42
+                        X, y_enc_full, test_size=0.25, stratify=y_enc_full, random_state=42
                     )
                     search = train_model(
                         pipeline,
@@ -726,23 +760,27 @@ def main() -> None:
                     best_estimator = search.best_estimator_
                     y_pred = best_estimator.predict(X_test)
                     report_dict = classification_report(
-                        y_test_enc, y_pred, target_names=class_names, output_dict=True
+                        y_test_enc, y_pred, target_names=class_names_local, output_dict=True
                     )
                     # Display best parameters and classification report
                     st.subheader("Mejores hiperparámetros encontrados")
                     st.json(search.best_params_)
                     st.subheader("Informe de clasificación (test)")
                     report_df = pd.DataFrame(report_dict).T
-                    st.dataframe(report_df.style.format({
-                        "precision": "{:.3f}",
-                        "recall": "{:.3f}",
-                        "f1-score": "{:.3f}",
-                        "support": "{:.0f}",
-                    }))
+                    styled_report = report_df.style.format(
+                        {
+                            "precision": "{:.3f}",
+                            "recall": "{:.3f}",
+                            "f1-score": "{:.3f}",
+                            "support": "{:.0f}",
+                        }
+                    )
+                    # Explicitly set width to avoid use_container_width deprecation warnings
+                    st.dataframe(styled_report, width="stretch")
                     # Confusion Matrix
                     cm = confusion_matrix(y_test_enc, y_pred)
                     st.subheader("Matriz de confusión")
-                    plot_confusion_matrix(cm, class_names, model_name)
+                    plot_confusion_matrix(cm, class_names_local, model_name)
                     # ROC Curves if applicable
                     # Determine probabilities
                     y_score: Optional[np.ndarray] = None
@@ -770,13 +808,13 @@ def main() -> None:
                             est_classes = np.arange(y_score.shape[1])
                         order_idx = [
                             int(np.where(est_classes == i)[0][0]) if i in est_classes else i
-                            for i in range(len(class_names))
+                            for i in range(len(class_names_local))
                         ]
                         try:
                             y_score = y_score[:, order_idx]
                         except Exception:
                             pass
-                        plot_roc_curves(y_test_enc, y_score, class_names, model_name)
+                        plot_roc_curves(y_test_enc, y_score, class_names_local, model_name)
                     else:
                         st.info(
                             "El modelo no proporciona probabilidades ni puntajes de decisión, por lo que no se pueden trazar curvas ROC."
