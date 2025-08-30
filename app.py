@@ -8,150 +8,143 @@ Original file is located at
 """
 
 # -*- coding: utf-8 -*-
-# ========================================
-# App Streamlit — Diabetes UCI (id=296)
-# Paso 1: Carga de datos + EDA básico (sin fugas)
-# ========================================
+# =============================================================================
+# App Streamlit — Pipeline sin fugas (EDA + preparación)
+# Carga desde UCI (ucimlrepo), limpieza segura, binarización de y y EDA visual.
+# =============================================================================
 
-import time
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
 
 from ucimlrepo import fetch_ucirepo
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+
+from collections import Counter
 
 # -------------------------------
 # Configuración de la página
 # -------------------------------
 st.set_page_config(
-    page_title="Diabetes UCI — ML sin fugas",
+    page_title="Diabetes — EDA y Preparación (Sin Fugas)",
     page_icon="🩺",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title("🩺 Diabetes UCI — ML sin fugas (Paso 1)")
-st.caption("Carga de datos desde UCI, limpieza básica segura y EDA inicial. "
-           "En los siguientes pasos añadiremos el pipeline, CV y modelos.")
+st.title("🩺 Análisis de Diabetes — EDA y Preparación (Sin Fugas)")
+st.caption("Carga directa desde UCI, limpieza básica segura, binarización de y (= 'NO' vs 'SI'), EDA y split temprano.")
 
-RANDOM_STATE = 42
+# -------------------------------
+# Parámetros
+# -------------------------------
+with st.sidebar:
+    st.header("⚙️ Parámetros")
+    RANDOM_STATE = st.number_input("Random state", min_value=0, value=42, step=1)
+    N_SAMPLE = st.number_input("Muestreo opcional (0 = sin muestreo)", min_value=0, value=5000, step=500,
+                               help="Si el dataset es muy grande, toma una muestra aleatoria para pruebas.")
+    show_raw_preview = st.checkbox("Ver muestra de datos crudos", value=False)
+    show_numeric_hists = st.checkbox("Graficar histogramas numéricos", value=True)
+    limit_cats = st.number_input("Máx. categorías a graficar por variable", min_value=5, value=30, step=5)
+    st.divider()
+    st.markdown("**Nota:** Todo el aprendizaje debe ir dentro de CV; aquí solo hacemos limpieza segura + EDA + split temprano.")
 
-# ---------------------------------------------
-# Sidebar: Parámetros de muestreo (opcional)
-# ---------------------------------------------
-st.sidebar.header("⚙️ Configuración")
-sample_on = st.sidebar.checkbox("Activar muestreo para pruebas rápidas", value=True)
-N_SAMPLE = st.sidebar.number_input(
-    "Tamaño de muestra (si se activa muestreo)",
-    min_value=1000, max_value=200000, value=50000, step=1000
-)
-st.sidebar.info(
-    "Usa el muestreo si el dataset completo te va lento en tu entorno. "
-    "Siempre cargamos desde el UCI repo para evitar usar archivos locales."
-)
-
-# ------------------------------------------------
-# Funciones auxiliares: carga y limpieza “segura”
-# ------------------------------------------------
+# -------------------------------
+# 1) Cargar datos (X, y)
+# -------------------------------
 @st.cache_data(show_spinner=True)
-def load_data(random_state: int, n_sample: int | None):
-    # 1) Cargar datos crudos desde UCI
-    ds = fetch_ucirepo(id=296)
+def load_data(id_ucirepo: int = 296):
+    ds = fetch_ucirepo(id=id_ucirepo)  # Diabetes 130-US hospitals (UCI id=296)
     X = ds.data.features.copy()
     y = ds.data.targets.copy().iloc[:, 0].astype(str)
+    return X, y
 
-    # 2) Eliminar columnas con alto riesgo de fuga / cardinalidad
-    id_like = [c for c in X.columns if c.lower() in (
-        "encounter_id", "patient_nbr", "encounterid", "patientnbr",
-        "diag_1", "diag_2", "diag_3", "payer_code", "medical_specialty"
-    )]
-    X = X.drop(columns=id_like, errors="ignore")
+X, y = load_data()
 
-    # 3) Muestreo opcional (aleatorio estricto por filas, sin aprender nada)
-    if n_sample is not None and len(X) > n_sample:
-        rng = np.random.RandomState(random_state)
-        idx = rng.choice(X.index, size=n_sample, replace=False)
-        X = X.loc[idx].reset_index(drop=True)
-        y = y.loc[idx].reset_index(drop=True)
+st.subheader("📥 Carga de datos")
+st.write(f"**Formas:** X = `{X.shape}` | y = `{y.shape}`")
+if show_raw_preview:
+    st.write("**Vista previa (X):**")
+    st.dataframe(X.head(), use_container_width=True)
+    st.write("**Vista previa (y):**")
+    st.write(y.head())
+
+# -------------------------------
+# EDA: análisis de categóricas y faltantes (antes de limpiar)
+# -------------------------------
+st.subheader("🔎 EDA — Variables categóricas y valores faltantes")
+cat_cols_eda = X.select_dtypes(exclude=np.number).columns.tolist()
+
+with st.expander("Número de clases únicas por variable categórica"):
+    if cat_cols_eda:
+        nunique_info = {col: int(X[col].nunique()) for col in cat_cols_eda}
+        nunique_df = pd.DataFrame.from_dict(nunique_info, orient="index", columns=["Clases únicas"]).sort_values("Clases únicas", ascending=False)
+        st.dataframe(nunique_df, use_container_width=True)
     else:
-        X = X.reset_index(drop=True)
-        y = y.reset_index(drop=True)
+        st.info("No se detectaron variables categóricas en X.")
 
-    # 4) Tipos de columna
-    num_cols = X.select_dtypes(include=np.number).columns.tolist()
-    cat_cols = X.select_dtypes(exclude=np.number).columns.tolist()
+missing_data = X.isnull().sum()
+missing_data = missing_data[missing_data > 0].sort_values(ascending=False)
 
-    # 5) Codificación de y (solo para evaluación posterior; aquí no entrenamos nada)
-    le = LabelEncoder().fit(y)
-    y_enc = le.transform(y)
-    class_names = le.classes_
+with st.expander("Valores faltantes por columna"):
+    if not missing_data.empty:
+        total_rows = len(X)
+        missing_pct = (missing_data / total_rows) * 100
+        missing_table = pd.DataFrame({
+            "Cantidad Faltante": missing_data,
+            "Porcentaje (%)": missing_pct.round(3)
+        })
+        st.dataframe(missing_table, use_container_width=True)
 
-    return X, y, y_enc, num_cols, cat_cols, class_names
-
-with st.spinner("Descargando dataset desde UCI y preparando vista inicial..."):
-    X, y, y_enc, num_cols, cat_cols, class_names = load_data(
-        RANDOM_STATE,
-        N_SAMPLE if sample_on else None
-    )
-    time.sleep(0.2)
+        total_missing_cells = missing_data.sum()
+        missing_pct_total = (missing_data / total_missing_cells) * 100
+        missing_table_total = pd.DataFrame({
+            "Cantidad Faltante": missing_data,
+            "Porcentaje del Total Faltante (%)": missing_pct_total.round(3)
+        })
+        st.write("**Distribución del total de faltantes por columna:**")
+        st.dataframe(missing_table_total, use_container_width=True)
+    else:
+        st.success("No hay valores faltantes en X.")
 
 # -------------------------------
-# EDA inicial
+# Limpieza segura: quitar IDs, códigos y variables de alta fuga
 # -------------------------------
-st.subheader("📦 Resumen del dataset (vista rápida)")
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Filas", f"{len(X):,}")
-c2.metric("Columnas", f"{X.shape[1]:,}")
-c3.metric("Numéricas", f"{len(num_cols):,}")
-c4.metric("Categóricas", f"{len(cat_cols):,}")
+st.subheader("🧹 Limpieza (solo lo 'seguro')")
 
-with st.expander("👀 Ver primeras filas (X)"):
-    st.dataframe(X.head(20), use_container_width=True)
+default_drop = [
+    "encounter_id","patient_nbr","encounterid","patientnbr",
+    "diag_1","diag_2","diag_3","payer_code","medical_specialty",
+    "weight","max_glu_serum","A1Cresult"
+]
+drop_candidates = [c for c in default_drop if c in X.columns]
+to_drop = st.multiselect(
+    "Columnas a eliminar por posibles fugas/alta cardinalidad:",
+    options=sorted(X.columns.tolist()),
+    default=drop_candidates
+)
 
-with st.expander("🔤 Variable objetivo (y) — primeras filas"):
-    st.write(pd.DataFrame({"y": y}).head(20))
+X = X.drop(columns=to_drop, errors="ignore")
+st.write(f"**X (post limpieza segura):** `{X.shape}`")
 
-st.markdown("**Clases:** " + ", ".join([f"`{c}`" for c in class_names]))
+# -------------------------------
+# Muestreo opcional para acelerar
+# -------------------------------
+if N_SAMPLE and len(X) > N_SAMPLE:
+    st.info(f"Aplicando muestreo aleatorio sin reemplazo de **{N_SAMPLE}** filas (de {len(X)}).")
+    rng = np.random.RandomState(RANDOM_STATE)
+    idx = rng.choice(X.index, size=N_SAMPLE, replace=False)
+    X = X.loc[idx].reset_index(drop=True)
+    y = y.loc[idx].reset_index(drop=True)
 
-# Distribución de clases
-st.subheader("📊 Distribución de clases")
-fig, ax = plt.subplots(figsize=(6, 4))
-(pd.Series(y)
-   .value_counts()
-   .sort_index()
-   .plot(kind="bar", ax=ax))
-ax.set_xlabel("Clase")
-ax.set_ylabel("Conteo")
-ax.set_title("Frecuencia por clase")
-st.pyplot(fig, clear_figure=True)
+# -------------------------------
+# Tipos de columna
+# -------------------------------
+num_cols = X.select_dtypes(include=np.number).columns.tolist()
+cat_cols = X.select_dtypes(exclude=np.number).columns.tolist()
 
-# Tipología de variables
-st.subheader("🧩 Tipos de variables")
 col1, col2 = st.columns(2)
 with col1:
-    st.write("**Numéricas**")
-    if len(num_cols):
-        st.code("\n".join(num_cols), language="text")
-    else:
-        st.info("No se detectaron columnas numéricas.")
-
-with col2:
-    st.write("**Categóricas**")
-    if len(cat_cols):
-        st.code("\n".join(cat_cols), language="text")
-    else:
-        st.info("No se detectaron columnas categóricas.")
-
-# NaNs por columna
-st.subheader("🧼 Valores faltantes por columna")
-na_counts = X.isna().sum().sort_values(ascending=False)
-st.dataframe(na_counts.to_frame("n_missing"), use_container_width=True)
-
-st.success(
-    "Listo el Paso 1 ✅ — Ya cargamos datos **desde UCI**, aplicamos limpieza segura, "
-    "mostramos la distribución de clases y la tipología de variables.\n\n"
-    "➡️ Siguiente: armaremos el **pipeline de preprocesamiento** (imputers, escalado, "
-    "one-hot/encodings) y el **esquema de CV sin fugas** antes de entrenar modelos."
-)
+    st.metric("Variables numéricas", len(num_cols))
