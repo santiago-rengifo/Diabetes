@@ -73,8 +73,14 @@ except Exception:
     SMOTE = None  # type: ignore
     ImbPipeline = None  # type: ignore
 
-# Disable global pyplot deprecation warnings from Streamlit
-st.set_option("deprecation.showPyplotGlobalUse", False)
+# Disable global pyplot deprecation warnings from Streamlit where supported.
+# In some Streamlit versions the configuration key may not be recognised.  To
+# avoid raising an exception on import we wrap the call in a try/except block.
+try:
+    st.set_option("deprecation.showPyplotGlobalUse", False)
+except Exception:
+    # Fall back silently if the option is unavailable.
+    pass
 
 
 class AdaptiveTruncatedSVD:
