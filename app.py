@@ -1,21 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-App de Streamlit — Diabetes (v9) — Pipeline de ML + EDA (versión fiel e interactiva)
+App de Streamlit/CLI — Diabetes (v9) — Pipeline de ML + EDA (versión fiel e interactiva)
 
-Cambios solicitados:
-- ✅ **EDA completo** (distribuciones, faltantes, correlaciones, balance de clases, info por tipo).
-- ✅ **Todo en español** (textos de UI y mensajes).
-- ✅ **Carga de datos solo desde UCI Repo (`ucimlrepo`, id=296)**. Si no está instalado, se muestra un error claro (no hay *fallback* a otros datasets ni carga por CSV).
-- ✅ **Misma lógica de tu `diabetes_v9.py`** con controles interactivos para *tuning*, modelos y reportes.
+Corrección de error: `ModuleNotFoundError: No module named 'streamlit'`.
+- Si **Streamlit no está instalado**, la app **cae automáticamente en modo CLI** con un shim ligero que
+  imprime los pasos y **guarda las figuras en `./outputs/`**, para que puedas ejecutar en entornos sandbox.
+- La **carga de datos es exclusivamente desde UCI Repo (id=296)**. Si `ucimlrepo` no está disponible,
+  se muestra un error y la ejecución se detiene (no hay datasets alternos para respetar tu requisito).
+- EDA en español, pipelines, búsqueda de hiperparámetros y métricas; fiel a tu `diabetes_v9.py` pero interactivo.
 
 Cómo ejecutar:
-1) `pip install streamlit ucimlrepo scikit-learn imbalanced-learn matplotlib pandas numpy seaborn`
-2) `streamlit run app_diabetes_v9.py`
+1) **Con UI (recomendado)** → `pip install streamlit ucimlrepo scikit-learn imbalanced-learn matplotlib pandas numpy seaborn` → `streamlit run app_diabetes_v9.py`
+2) **Sin UI (CLI)** → `pip install ucimlrepo scikit-learn imbalanced-learn matplotlib pandas numpy seaborn` → `python app_diabetes_v9.py`
 
 Autor: Adaptado para Santiago Rengifo (2025-08-30)
 """
 
 import os
+import sys
 import time
 from collections import Counter
 from typing import List, Tuple
@@ -23,10 +25,134 @@ from typing import List, Tuple
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 
-import streamlit as st
-from ucimlrepo import fetch_ucirepo
+# ------------------------------------------------------------
+# Importación de Streamlit con fallback CLI (shim)
+# ------------------------------------------------------------
+NO_STREAMLIT = False
+try:
+    import streamlit as st  # type: ignore
+except ModuleNotFoundError:
+    NO_STREAMLIT = True
+
+    class _DummyArea:
+        def __init__(self, root):
+            self._root = root
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            return False
+        # Pasarelas a métodos de st
+        def write(self, *args, **kwargs):
+            print(*args)
+        def dataframe(self, df, use_container_width: bool = True):
+            print(df.head(10).to_string())
+        def code(self, x):
+            print(x)
+        def info(self, x):
+            print(f"[info] {x}")
+        def warning(self, x):
+            print(f"[warning] {x}")
+        def error(self, x):
+            print(f"[error] {x}")
+
+    class _DummyProgress:
+        def progress(self, v: float, text: str = ""):
+            print(f"[progreso] {v:.0%} {text}")
+
+    class _DummySpinner:
+        def __init__(self, text: str = ""):
+            self.text = text
+        def __enter__(self):
+            print(f"[cargando] {self.text}")
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _STShim:
+        def set_page_config(self, **kwargs):
+            pass
+        def title(self, x):
+            print(f"\n=== {x} ===")
+        def caption(self, x):
+            print(x)
+        def header(self, x):
+            print(f"\n# {x}")
+        def subheader(self, x):
+            print(f"\n## {x}")
+        def write(self, *args, **kwargs):
+            print(*args)
+        def dataframe(self, df, use_container_width: bool = True):
+            print(df.head(10).to_string())
+        def code(self, x):
+            print(x)
+        def warning(self, x):
+            print(f"[warning] {x}")
+        def info(self, x):
+            print(f"[info] {x}")
+        def error(self, x):
+            print(f"[error] {x}")
+        def success(self, x):
+            print(f"[ok] {x}")
+        def pyplot(self, fig):
+            os.makedirs("outputs", exist_ok=True)
+            fname = os.path.join("outputs", f"fig_{int(time.time()*1000)}.png")
+            fig.savefig(fname, bbox_inches="tight", dpi=120)
+            print(f"[figura guardada] {fname}")
+        def button(self, label):
+            # En CLI ejecutamos automáticamente
+            print(f"[botón] {label} → ejecución automática en CLI")
+            return True
+        def slider(self, label, minv, maxv, value, step=None):
+            return value
+        def number_input(self, label, value=0, step=1):
+            return value
+        def multiselect(self, label, options, default=None):
+            return list(options if default is None else default)
+        def checkbox(self, label, value=False):
+            return value
+        def radio(self, label, options, help=None):
+            return options[0]
+        def divider(self):
+            pass
+        def expander(self, *args, **kwargs):
+            return _DummyArea(self)
+        def columns(self, spec):
+            n = len(spec) if hasattr(spec, "__len__") else int(spec)
+            return [_DummyArea(self) for _ in range(n)]
+        def progress(self, *args, **kwargs):
+            return _DummyProgress()
+        def spinner(self, text: str = ""):
+            return _DummySpinner(text)
+        @property
+        def sidebar(self):
+            return _DummyArea(self)
+        def stop(self):
+            raise SystemExit()
+        # Cache-data de Streamlit → no-op
+        def cache_data(self, show_spinner: bool = False):
+            def deco(fn):
+                return fn
+            return deco
+
+    st = _STShim()  # type: ignore
+
+# ------------------------------------------------------------
+# Dependencias opcionales (seaborn)
+# ------------------------------------------------------------
+HAS_SEABORN = True
+try:
+    import seaborn as sns  # type: ignore
+except Exception:
+    HAS_SEABORN = False
+
+# ------------------------------------------------------------
+# UCI Repo (solo carga por este medio)
+# ------------------------------------------------------------
+HAS_UCI = True
+try:
+    from ucimlrepo import fetch_ucirepo  # type: ignore
+except Exception:
+    HAS_UCI = False
 
 from sklearn.model_selection import train_test_split, StratifiedKFold, RandomizedSearchCV
 from sklearn.preprocessing import OneHotEncoder, StandardScaler, LabelEncoder, FunctionTransformer
@@ -57,7 +183,7 @@ from imblearn.over_sampling import SMOTENC, SMOTE
 RANDOM_STATE_DEFAULT = 42
 
 # ==========================
-# CONFIGURACIÓN DE PÁGINA
+# CONFIGURACIÓN DE PÁGINA/UI
 # ==========================
 st.set_page_config(
     page_title="Diabetes v9 — Pipeline ML + EDA",
@@ -83,6 +209,9 @@ def make_ohe():
 @st.cache_data(show_spinner=False)
 def cargar_uci() -> Tuple[pd.DataFrame, pd.Series]:
     """Carga el dataset desde UCI Repo (id=296). **Sin alternativas**."""
+    if not HAS_UCI:
+        st.error("`ucimlrepo` no está disponible. Instálalo para cargar desde UCI Repo.")
+        st.stop()
     ds = fetch_ucirepo(id=296)
     X = ds.data.features.copy()
     y = ds.data.targets.copy()
@@ -138,6 +267,8 @@ with st.sidebar:
 # ==========================
 try:
     X_full, y_full = cargar_uci()
+except SystemExit:
+    sys.exit(1)
 except Exception as e:
     st.error("No se pudo cargar desde **UCI Repo**. Asegúrate de instalar `ucimlrepo` y tener conexión.")
     st.stop()
@@ -175,7 +306,7 @@ with st.expander("📊 EDA — Histogramas (variables numéricas)", expanded=Fal
     if len(num_cols) == 0:
         st.info("No hay variables numéricas.")
     else:
-        # Selecciona las de mayor varianza para no sobrecargar
+        # Seleccionar por varianza para no sobrecargar
         var_order = X_full[num_cols].var().sort_values(ascending=False).index.tolist()
         cols_plot = var_order[:max_cols_hist]
         ncols = 2
@@ -197,7 +328,11 @@ with st.expander("📈 EDA — Boxplots (variables numéricas)", expanded=False)
     else:
         cols_plot = num_cols[:min(8, len(num_cols))]
         fig_b, ax_b = plt.subplots(figsize=(10,4))
-        sns.boxplot(data=X_full[cols_plot], ax=ax_b)
+        if HAS_SEABORN:
+            import seaborn as sns  # type: ignore
+            sns.boxplot(data=X_full[cols_plot], ax=ax_b)
+        else:
+            ax_b.boxplot(X_full[cols_plot].dropna().values, labels=cols_plot, vert=True)
         ax_b.set_title("Boxplots (muestra de variables)")
         plt.tight_layout()
         st.pyplot(fig_b)
@@ -210,7 +345,16 @@ with st.expander("🔗 EDA — Matriz de correlación (Top-k por varianza)", exp
         sel = var_order[:min(corr_top_k, len(var_order))]
         corr = X_full[sel].corr(numeric_only=True)
         fig_c, ax_c = plt.subplots(figsize=(1.0*len(sel)+2, 1.0*len(sel)+2))
-        sns.heatmap(corr, annot=False, cmap="vlag", center=0, ax=ax_c)
+        if HAS_SEABORN:
+            import seaborn as sns  # type: ignore
+            sns.heatmap(corr, annot=False, cmap="vlag", center=0, ax=ax_c)
+        else:
+            cax = ax_c.imshow(corr.values, vmin=-1, vmax=1)
+            ax_c.set_xticks(range(len(sel)))
+            ax_c.set_yticks(range(len(sel)))
+            ax_c.set_xticklabels(sel, rotation=90)
+            ax_c.set_yticklabels(sel)
+            fig_c.colorbar(cax)
         ax_c.set_title("Correlación (Top-k por varianza)")
         plt.tight_layout()
         st.pyplot(fig_c)
@@ -511,6 +655,9 @@ if st.button("🚀 Entrenar y evaluar"):
             assert not df_res["Test_F1_macro"].isna().any(), "F1_macro en test no debe contener NaN."
             assert df_res["Test_F1_macro"].between(0, 1).all(), "F1_macro fuera de rango [0,1]."
             assert len(df_res) == len(modelos_seleccionados), "Faltan filas en el resumen para algún modelo seleccionado."
+            # Confusion matrix dimensiones coherentes
+            cm = confusion_matrix(y_test, mejores[top['Modelo']].predict(X_test))
+            assert cm.shape == (len(class_names), len(class_names)), "Dimensiones inesperadas en la matriz de confusión."
         except AssertionError as e:
             st.warning(f"Self-test resultados: {e}")
 else:
@@ -524,6 +671,11 @@ try:
     assert X_train.shape[0] > 0 and X_test.shape[0] > 0, "Split vacío: revisa el tamaño de test."
     # Chequeo ligero del preprocesamiento: transformar 10 filas no debe fallar
     _ = pre.fit(X_train, y_train).transform(X_train.iloc[:10])
+    # Verificación de tipos: si no hay categóricas, el balanceador debe ser SMOTE; si las hay, SMOTENC
+    if len(cat_cols) == 0:
+        assert isinstance(smote_like, SMOTE), "Se esperaba SMOTE cuando no hay variables categóricas."
+    else:
+        assert isinstance(smote_like, SMOTENC), "Se esperaba SMOTENC cuando hay variables categóricas."
 except AssertionError as e:
     st.warning(f"Self-test: {e}")
 except Exception as e:
