@@ -690,22 +690,13 @@ def main() -> None:
         model_options = list(get_models().keys())
         model_name = st.selectbox("Clasificador", model_options)
 
-        # Classification type: multiclass or binary
+        # Classification type: multiclass or binary (biclase)
         classification_type = st.radio(
             "Tipo de clasificación",
             options=["Multiclase", "Biclase"],
             index=0,
-            help="Seleccione cómo tratar la variable objetivo: como problema multiclase o agrupar varias clases en una categoría positiva.",
+            help="Seleccione cómo tratar la variable objetivo: como problema multiclase o agrupar todas las clases distintas de 'No' como 1."
         )
-        # If biclase, choose which labels will be grouped as positive
-        positive_selection: List[str] = []
-        if classification_type == "Biclase":
-            positive_selection = st.multiselect(
-                "Seleccione clases para agrupar como Positivo",
-                options=class_names,
-                default=(class_names[1:] if len(class_names) > 1 else class_names),
-                help="Las clases seleccionadas se etiquetarán como positivas; las restantes como negativas."
-            )
 
         # Hyperparameter search settings
         n_iter = st.slider(
@@ -726,11 +717,8 @@ def main() -> None:
                 try:
                     # Decide label encoding according to classification type
                     if classification_type == "Biclase":
-                        if not positive_selection:
-                            st.error("Debe seleccionar al menos una clase para agrupar como Positivo.")
-                            return
-                        # Map classes to Positivo/Negativo strings
-                        y_binary = y.apply(lambda x: "Positivo" if x in positive_selection else "Negativo")
+                        # Map the class 'No' (case-insensitive) to 'No' (0) and all others to 'Yes' (1)
+                        y_binary = y.apply(lambda x: "No" if str(x).strip().lower() == "no" else "Yes")
                         le_local = LabelEncoder().fit(y_binary)
                         y_enc_full = le_local.transform(y_binary)
                         class_names_local = le_local.classes_.tolist()
